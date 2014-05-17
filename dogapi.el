@@ -17,26 +17,26 @@
 
 ;; Configuration variables
 
-(defvar dog/api-endpoint "https://app.datadoghq.com/"
+(defvar dogapi-api-endpoint "https://app.datadoghq.com/"
   "URL to which API requests should be sent")
 
-(defconst dog/api-version 1)
+(defconst dogapi-api-version 1)
 
-(defvar dog/api-key nil
+(defvar dogapi-api-key nil
   "API key for Datadog API.")
 
-(defvar dog/application-key nil
+(defvar dogapi-application-key nil
   "Application key for Datadog API")
 
-(defconst dog/url-endpoints
-  (list '(dog/get-dash-list . "dash")
-        '(dog/get-dash . "dash/%d")
-        '(dog/get-metric-series . "series/query")))
+(defconst dogapi-url-endpoints
+  (list '(dogapi-get-dash-list . "dash")
+        '(dogapi-get-dash . "dash/%d")
+        '(dogapi-get-metric-series . "series/query")))
 
 ;; External functions
 
-(defun dog/metric-query (query from-ts to-ts)
-  (let ((response (dog/request 'dog/get-metric-series
+(defun dogapi-metric-query (query from-ts to-ts)
+  (let ((response (dogapi-request 'dogapi-get-metric-series
                                (list (cons "q" query)
                                      (cons "from" from-ts)
                                      (cons "to" to-ts))
@@ -46,15 +46,15 @@
 
 ;; Helper functions
 
-(defun dog/request (request-name url-param extra-args)
+(defun dogapi--request (request-name url-param extra-args)
   "docstring here"
-  (let* ((url (dog/request-url request-name url-param extra-args))
+  (let* ((url (dogapi--request-url request-name url-param extra-args))
           (url-request-method "GET"))
 
-    (dog/json-from-buffer (url-retrieve-synchronously url))
+    (dogapi--json-from-buffer (url-retrieve-synchronously url))
   ))
 
-(defun dog/json-from-buffer (buffer)
+(defun dogapi--json-from-buffer (buffer)
   (let ((json-response nil))
     (save-excursion
       (switch-to-buffer buffer)
@@ -66,19 +66,19 @@
     (json-read-from-string json-response)
     ))
 
-(defun dog/request-url (request-name url-param extra-args)
+(defun dogapi--request-url (request-name url-param extra-args)
   "Generates the actual URL to be used"
   (message url-param)
-  (let* ((request-base (cdr (assoc request-name dog/url-endpoints)))
+  (let* ((request-base (cdr (assoc request-name dogapi-url-endpoints)))
          (request-path (if url-param
                            (format request-base url-param)
                          request-base)))
 
-    (concat (dog/join-url-segments (list dog/api-endpoint
-                                         (dog/get-api-base)
+    (concat (dogapi--join-url-segments (list dogapi-api-endpoint
+                                         (dogapi--get-api-base)
                                          request-path))
             (format "?api_key=%s&application_key=%s"
-                    dog/api-key dog/application-key)
+                    dogapi-api-key dogapi-application-key)
             (mapconcat
              (lambda (x)
                (format "&%s=%s"
@@ -87,12 +87,12 @@
              extra-args ""))
     ))
 
-(defun dog/get-api-base ()
-  (format "api/v%d" dog/api-version))
+(defun dogapi--get-api-base ()
+  (format "api/v%d" dogapi-api-version))
 
-(defun dog/join-url-segments (segments)
+(defun dogapi--join-url-segments (segments)
   "Joins url-segments with at most 1 '/' character"
   (replace-regexp-in-string
-   "[^:]/+"
-   "/"
+   "([^\:])/+"
+   "\\1/"
    (mapconcat 'identity segments "/")))
