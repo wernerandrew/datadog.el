@@ -36,12 +36,16 @@
 ;; External functions
 
 (defun dogapi-metric-query (query from-ts to-ts)
-  (let ((response (dogapi-request 'dogapi-get-metric-series
-                               (list (cons "q" query)
-                                     (cons "from" from-ts)
-                                     (cons "to" to-ts))
-                               nil)))
-    response
+  "Main metric query function.
+Currently only a single query supported per call."
+  (let* ((response (dogapi--request
+                    'dogapi-get-metric-series
+                    nil
+                    (list (cons "q" query)
+                          (cons "from" from-ts)
+                          (cons "to" to-ts))))
+         (series (cdr (assoc 'series response))))
+    series
     ))
 
 ;; Helper functions
@@ -96,3 +100,5 @@
    "([^\:])/+"
    "\\1/"
    (mapconcat 'identity segments "/")))
+
+(provide 'dogapi)
