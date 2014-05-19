@@ -31,8 +31,16 @@
 
 ;; Buffer state variables
 
+(defvar datadog--active-tile nil
+  "A (title . graphs) cons cell for the active tile.")
+
+(defvar datadog--all-queries nil
+  "A list of all queries that are navigable via
+`datadog-next-series' and `datadog-previous-series'.
+Most commonly, this is all queries within a graph tile.")
+
 (defvar datadog--active-query nil
-  "Stores the active query that we're looking at")
+  "Stores the active query currently being navigated")
 
 (defvar datadog--active-interval nil)
 
@@ -43,8 +51,11 @@
 (defvar datadog--current-result nil
   "Stores the active result as a list of (scope . pointlist)")
 
-(defvar datadog--looking-at 0
-  "This the the current result we're looking at")
+(defvar datadog--looking-at-query 0
+  "The index of the query currently being browsed")
+
+(defvar datadog--looking-at-series 0
+  "The current series within the current query")
 
 (defvar datadog--timeframe 'one-hour
   "Currently supported")
@@ -92,7 +103,7 @@
 ;; Functions that like, you know, map to series
 (defun datadog-metric-query (query &optional skip-render)
   "It's a metric query, kids."
-  (interactive "sEnter metric query: ")
+  (interactive)
   (let* ((offset (cdr (assoc datadog--timeframe datadog--time-spans)))
          (to-utc (datadog--utc-now))
          (from-utc (- to-utc offset))
@@ -109,9 +120,17 @@
       (setq datadog--active-to-ts
             (datadog--closest-below to-utc interval))
       (setq datadog--current-result series)
-      (setq datadog--looking-at 0)
+      (setq datadog--looking-at-series 0)
       (when (not skip-render)
         (datadog--render-graph)))))
+
+(defun datadog-explore-metric (query)
+  "Query exactly one metric."
+  (interactive  "sEnter metric query: ")
+  (setq datadog--all-queries (list query))
+  (setq datadog--active-tile nil)
+  (setq datadog--looking-at-query 0)
+  (datadog-metric-query query))
 
 (defconst datadog--rollup-hack
   '(("}$" . "}.rollup(%d)")
@@ -144,13 +163,35 @@ setting the interval directly through API requests."
 
 (defun datadog--checked-nav (offset)
   (interactive)
-  (let ((next-idx (+ datadog--looking-at offset)))
-    (if (and (< next-idx (length datadog--current-result))
-             (>= next-idx 0))
-        (progn
-          (setq datadog--looking-at next-idx)
-          (datadog--render-graph))
-      (error (if (< next-idx 0) "Beginning of series" "End of series")))
+  (let ((next-idx (+ datadog--looking-at-series offset))
+        (current-len (length datadog--current-result)))
+    (cond
+     ;; easy case: we can stay on this graph
+     ((and (< next-idx current-len)
+           (>= next-idx 0))
+      (setq datadog--looking-at-series next-idx)
+      (datadog--render-graph))
+     ;; next: we are at the beginning but can go backwards
+     ((and (= next-idx -1)
+           (> datadog--looking-at-query 0))
+      (setq datadog--looking-at-query (- datadog--looking-at-query 1))
+      (datadog-metric-query (elt datadog--all-queries
+                                 datadog--looking-at-query)
+                            t) ;; skip render for now
+      (let ((num-series (length datadog--current-result)))
+        (when (> num-series 0)
+          (setq datadog--looking-at-series (- num-series 1)))
+        (datadog--render-graph)))
+     ;; or, we're at the end, and can go forwards
+     ((and (= next-idx 1)
+           (< datadog--looking-at-query (length datadog--all-queries)))
+      (setq datadog--looking-at-query (+ datadog--looking-at-query 1))
+      (datadog-metric-query (elt datadog--all-queries
+                                 datadog--looking-at-query)))
+     ((or (> offset 1) (< offset -1))
+      ;; FIXME: uh, don't throw an error here.
+      (error "Can only move one spot for now!"))
+     (t (error (if (< next-idx 0) "Beginning of series" "End of series"))))
     ))
 
 (defun datadog-next-series ()
@@ -172,11 +213,11 @@ setting the interval directly through API requests."
 (defun datadog-refresh ()
   (interactive)
   ;; TODO: save active looking-at
-  (let ((current-idx datadog--looking-at))
+  (let ((current-idx datadog--looking-at-series))
     (datadog-metric-query datadog--active-query t)
     ;; stay on current graph index if possible
     (when (> (length datadog--current-result) current-idx)
-      (setq datadog--looking-at current-idx))
+      (setq datadog--looking-at-series current-idx))
     (datadog--render-graph)))
 
 (defun datadog-quit ()
@@ -361,7 +402,7 @@ setting the interval directly through API requests."
   (datadog--reset-graph)
 
   (let* ((buffer-read-only nil)
-         (series (elt datadog--current-result datadog--looking-at))
+         (series (elt datadog--current-result datadog--looking-at-series))
          (points (datadog--filter-points (cdr (assoc 'pointlist series))))
          (extent (datadog--series-extent points))
          (ymin (min (car extent) 0.0))
@@ -370,6 +411,9 @@ setting the interval directly through API requests."
                      (- ymax ymin)
                    (max ymax 1))))
 
+    (when datadog--active-tile
+      (datadog--set-tile-title (cdr (assoc 'title
+                                           datadog--active-tile))))
     (datadog--set-graph-title (cdr (assoc 'expression series)))
     (save-excursion
       (goto-char (point-min))
@@ -601,7 +645,7 @@ Maybe we should relax that assumption at some point."
 
 ;; Dash selection intervace
 
-(defvar datadog--current-dash nil)
+(defvar datadog--current-dash-id nil)
 
 (defvar helm-source-datadog-dash-list
   '((name . "Dash List")
@@ -633,7 +677,7 @@ Maybe we should relax that assumption at some point."
 (defvar helm-source-datadog-select-tile
   '((name . "Select Tile")
     (candidates . datadog--dash-tiles)
-    (action . nil))) ;; FILL ME IN
+    (action . (("Show Tile" . datadog-render-tile)))))
 
 (defun datadog--get-dash-graphs (dash-object)
   (cdr (assoc 'graphs (cdr (assoc 'dash dash-object)))))
@@ -644,17 +688,30 @@ Maybe we should relax that assumption at some point."
             (cdr (assoc 'requests tile-def)))))
 
 (defun datadog--dash-tiles ()
-  (let ((dash (dogapi-dash datadog--current-dash)))
+  (let ((dash (dogapi-dash datadog--current-dash-id)))
     (mapcar (lambda (tile)
-              (cons (cdr (assoc 'title tile))
-                    (datadog--queries-from-tile tile)))
+              (let ((tile-title (cdr (assoc 'title tile))))
+                (cons tile-title
+                      (list (cons 'title tile-title)
+                            (cons 'queries (datadog--queries-from-tile tile)))
+                      )))
             (datadog--get-dash-graphs dash))))
 
 (defun datadog-select-tile (&optional dash-id)
   (interactive)
   (when dash-id
-    (setq datadog--current-dash dash-id))
-  (helm :sources '(helm-source-datadog-select-tile)))
+    (setq datadog--current-dash-id dash-id))
+  (if datadog--current-dash-id
+      (helm :sources '(helm-source-datadog-select-tile))
+    (error "No dash currently selected")))
+
+(defun datadog-render-tile (tile)
+  (setq datadog--active-tile tile)
+  (setq datadog--looking-at-query 0)
+  (let ((queries (cdr (assoc 'queries tile))))
+    (when queries
+      (setq datadog--all-queries queries)
+      (datadog-metric-query (car queries)))))
 
 ;; Main entry function
 
@@ -671,7 +728,7 @@ Maybe we should relax that assumption at some point."
 
 (defvar datadog-mode-map
   (let ((map (make-keymap)))
-    (define-key map (kbd "m") 'datadog-metric-query)
+    (define-key map (kbd "m") 'datadog-explore-metric)
     (define-key map (kbd "n") 'datadog-next-series)
     (define-key map (kbd "p") 'datadog-previous-series)
     (define-key map (kbd "f") 'datadog-go-forward)
@@ -696,6 +753,8 @@ Maybe we should relax that assumption at some point."
 (defun datadog--init ()
   (interactive)
   (make-local-variable 'show-trailing-whitespace)
+  (make-local-variable 'datadog--active-tile)
+  (make-local-variable 'datadog--all-queries)
   (make-local-variable 'datadog--active-query)
   (make-local-variable 'datadog--current-result)
   (make-local-variable 'datadog--timeframe)
@@ -716,3 +775,4 @@ Maybe we should relax that assumption at some point."
   (datadog--reset-graph))
 
 (provide 'datadog)
+   
