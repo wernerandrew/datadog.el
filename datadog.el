@@ -191,7 +191,7 @@ setting the interval directly through API requests."
      ((or (> offset 1) (< offset -1))
       ;; FIXME: uh, don't throw an error here.
       (error "Can only move one spot for now!"))
-     (t (error (if (< next-idx 0) "Beginning of series" "End of series"))))
+     (t (message (if (< next-idx 0) "Beginning of series" "End of series"))))
     ))
 
 (defun datadog-next-series ()
@@ -212,13 +212,13 @@ setting the interval directly through API requests."
 
 (defun datadog-refresh ()
   (interactive)
-  ;; TODO: save active looking-at
-  (let ((current-idx datadog--looking-at-series))
-    (datadog-metric-query datadog--active-query t)
-    ;; stay on current graph index if possible
-    (when (> (length datadog--current-result) current-idx)
-      (setq datadog--looking-at-series current-idx))
-    (datadog--render-graph)))
+  (when datadog--active-query
+    (let ((current-idx datadog--looking-at-series))
+      (datadog-metric-query datadog--active-query t)
+      ;; stay on current graph index if possible
+      (when (> (length datadog--current-result) current-idx)
+        (setq datadog--looking-at-series current-idx))
+      (datadog--render-graph))))
 
 (defun datadog-quit ()
   (interactive)
@@ -389,6 +389,7 @@ setting the interval directly through API requests."
   "Color for showing chart area"
   :group 'datadog-faces)
 
+;; FIXME: uh, black might not be the best default foreground
 (defface datadog-chart-title
   '((((class color) (min-colors 8) (background dark))
      :foreground "green")
@@ -407,50 +408,55 @@ setting the interval directly through API requests."
 
   (datadog--reset-graph)
 
-  (let* ((buffer-read-only nil)
-         (series (elt datadog--current-result datadog--looking-at-series))
-         (points (datadog--filter-points (cdr (assoc 'pointlist series))))
-         (extent (datadog--series-extent points))
-         (ymin (min (car extent) 0.0))
-         (ymax (cdr extent))
-         (yrange (if (> (- ymax ymin) 0)
-                     (- ymax ymin)
-                   (max ymax 1))))
+  (let* ((buffer-read-only nil))
 
     (when datadog--active-tile
       (datadog--set-tile-title (cdr (assoc 'title
                                            datadog--active-tile))))
-    (datadog--set-graph-title (cdr (assoc 'expression series)))
-    (save-excursion
-      (goto-char (point-min))
-      (forward-line (datadog--get-graph-dim 'margin-top))
+    (if (> (length datadog--current-result) 0)
+        ;; this is where the magic happens
+        (let* ((series (elt datadog--current-result datadog--looking-at-series))
+               (points (datadog--filter-points (cdr (assoc 'pointlist series))))
+               (extent (datadog--series-extent points))
+               (ymin (min (car extent) 0.0))
+               (ymax (cdr extent))
+               (yrange (if (> (- ymax ymin) 0)
+                           (- ymax ymin)
+                         (max ymax 1)))
+               (scaled (mapcar (lambda (p)
+                                 (cons (datadog--scale-t (elt p 0))
+                                       (datadog--scale-y (elt p 1)
+                                                         ymin
+                                                         yrange)))
+                               points)))
 
-      ;; this is where the magic happens
-      (let ((scaled (mapcar (lambda (p)
-                              (cons (datadog--scale-t (elt p 0))
-                                    (datadog--scale-y (elt p 1)
-                                                      ymin
-                                                      yrange)))
-                            points)))
+          ;; Set the title only if we have a real series
+          (datadog--set-graph-title (cdr (assoc 'expression series)))
+          ;; and only then render the graph
+          (goto-char (point-min))
+          (forward-line (datadog--get-graph-dim 'margin-top))
 
-        (while (< (line-number-at-pos) (cdr datadog--graph-origin))
-          (forward-char (+ (car datadog--graph-origin) 1))
-          (dolist (sc scaled)
-            (insert-char ?\s (- (car sc) (current-column)))
-            (if (> (line-number-at-pos) (cdr sc))
-                (progn
-                  (insert "#")
-                  (put-text-property (- (point) 1) (point)
-                                     'face 'datadog-chart-area))
-              (insert-char ?\s)))
-          (forward-line 1))))
 
-    ;; draw our ticks
-    (datadog--draw-t-ticks)
-    (datadog--draw-y-ticks ymin ymax yrange)
-    ;; and end up in some vaguely sensible place
-    (goto-char (point-min))
-    ))
+          (while (< (line-number-at-pos) (cdr datadog--graph-origin))
+            (forward-char (+ (car datadog--graph-origin) 1))
+            (dolist (sc scaled)
+              (insert-char ?\s (- (car sc) (current-column)))
+              (if (> (line-number-at-pos) (cdr sc))
+                  (progn
+                    (insert-char ?#)
+                    (put-text-property (- (point) 1) (point)
+                                       'face 'datadog-chart-area))
+                (insert-char ?\s)))
+            (forward-line 1))
+          ;; only draw y-axis ticks with data
+          (datadog--draw-y-ticks ymin ymax yrange))
+      (datadog--set-graph-title (concat "No data: " datadog--active-query)))
+
+  ;; but always draw t-ticks
+  (datadog--draw-t-ticks)
+  ;; and end up in some vaguely sensible place
+  (goto-char (point-min))
+  ))
 
 ;; TODO: use this rather than hardcoded tick sizes
 (defconst datadog--preferred-tick-spacings
