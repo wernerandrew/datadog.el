@@ -4,15 +4,12 @@
 
 ;; Author: Drew Werner <wernerandrew at gmail.com>
 ;; Package-Requires: helm
+;; URL: http://github.com/wernerandrew/datadog.el
 ;; Version: 0.0.1alpha
 
-;; LICENSE GOES HERE
+;; See LICENSE file for licensing details
 
 ;; Commentary:
-
-;; Code
-
-;; Testing stuff
 
 (require 'helm)
 

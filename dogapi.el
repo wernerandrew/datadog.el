@@ -3,10 +3,11 @@
 ;; Copyright (C) 2014 Drew Werner
 
 ;; Author: Drew Werner <wernerandrew at gmail.com>
-;; Package-Requires:
+;; Package-Requires: url json
+;; URL: http://github.com/wernerandrew/datadog.el
 ;; Version: 0.0.1alpha
 
-;; LICENSE GOES HERE
+;; See LICENSE file for licensing details.
 
 ;; Commentary:
 
@@ -17,7 +18,7 @@
 
 ;; Configuration variables
 
-(defvar dogapi-api-endpoint "https://app.datadoghq.com/"
+(defvar dogapi-api-endpoint "https://app.datadoghq.com"
   "URL to which API requests should be sent")
 
 (defconst dogapi-api-version 1)
