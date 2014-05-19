@@ -48,6 +48,12 @@ Currently only a single query supported per call."
     series
     ))
 
+(defun dogapi-dash-list ()
+  (dogapi--request 'dogapi-get-dash-list nil nil))
+
+(defun dogapi-dash (dash-id)
+  (dogapi--request 'dogapi-get-dash dash-id nil))
+
 ;; Helper functions
 
 (defun dogapi--request (request-name url-param extra-args)
@@ -72,15 +78,14 @@ Currently only a single query supported per call."
 
 (defun dogapi--request-url (request-name url-param extra-args)
   "Generates the actual URL to be used"
-  (message url-param)
   (let* ((request-base (cdr (assoc request-name dogapi-url-endpoints)))
          (request-path (if url-param
                            (format request-base url-param)
                          request-base)))
 
     (concat (dogapi--join-url-segments (list dogapi-api-endpoint
-                                         (dogapi--get-api-base)
-                                         request-path))
+                                             (dogapi--get-api-base)
+                                             request-path))
             (format "?api_key=%s&application_key=%s"
                     dogapi-api-key dogapi-application-key)
             (mapconcat

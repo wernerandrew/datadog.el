@@ -14,17 +14,9 @@
 
 ;; Testing stuff
 
-(require 'dogapi)
+(require 'helm)
 
-(defun datadog--make-random-series (start end interval rand-min rand-max)
-  (defun make-random ()
-    (+ rand-min (random* rand-max)))
-  (let ((output nil)
-        (current end))
-    (while (> current start)
-      (setq output (cons (list current (make-random)) output))
-      (setq current (- current interval)))
-    output))
+(require 'dogapi)
 
 ;; Time utilities
 
@@ -36,8 +28,6 @@
 (defun datadog--to-js-time (timestamp)
   "Our API expects string timestamps in milliseconds.  Who are we to argue?"
   (number-to-string (* 1000 timestamp)))
-
-;; Drawing functions
 
 ;; Buffer state variables
 
@@ -163,7 +153,7 @@ setting the interval directly through API requests."
   (interactive)
   (kill-buffer (current-buffer)))
 
-;; Graph drawing routines variables and routines
+;; Graph drawing variables and routines
 
 ;; maybe could have done this as a bunch of alists,
 ;; but I'm lazy (and maybe stupid)
@@ -289,21 +279,52 @@ setting the interval directly through API requests."
           )
     ))
 
-(defun datadog--set-graph-title (title)
+(defun datadog--set-title (title line-num)
   (let* ((buffer-read-only nil)
          (w (window-width))
          (offset (max 0 (/ (- w (length title)) 2)))
          (title (if (> (length title) w)
                     (substring title 0 w)
                   title)))
-    (when (> (datadog--get-graph-dim 'margin-top) 1)
+    (when (>= (datadog--get-graph-dim 'margin-top) line-num)
       (save-excursion
-        (goto-line 1)
+        (goto-line line-num) ;; maybe don't hardcode this
         (when (not (looking-at "^$"))
           (kill-line))
         (insert-char ?\s offset)
-        (insert title)))
+        (insert title)
+        (put-text-property (- (point) (length title)) (point)
+                           'face 'datadog-chart-title)))
     ))
+
+(defun datadog--set-tile-title (title)
+  (datadog--set-title title 1))
+
+(defun datadog--set-graph-title (title)
+  (datadog--set-title title 2))
+
+;; Graphing face definitions
+(defface datadog-chart-area
+  '((((class color) (min-colors 8))
+     :foreground "blue"
+     :background "blue")
+    (t :inverse-video t))
+  "Color for showing chart area"
+  :group 'datadog-faces)
+
+(defface datadog-chart-title
+  '((((class color) (min-colors 8) (background dark))
+     :foreground "green")
+    (t :foreground "black"))
+  "Color for showing chart title"
+  :group 'datadog-faces)
+
+(defface datadog-chart-label
+  '((((class color) (min-colors 8) (background dark))
+     :foreground "yellow")
+    ('t :foreground "black"))
+  "Color for time and value labels on graph"
+  :group 'datadog-faces)
 
 (defun datadog--render-graph ()
 
@@ -337,7 +358,10 @@ setting the interval directly through API requests."
           (dolist (sc scaled)
             (insert-char ?\s (- (car sc) (current-column)))
             (if (> (line-number-at-pos) (cdr sc))
-                (insert-char ?*)
+                (progn
+                  (insert "#")
+                  (put-text-property (- (point) 1) (point)
+                                     'face 'datadog-chart-area))
               (insert-char ?\s)))
           (forward-line 1))))
 
@@ -429,6 +453,8 @@ of the line where you started."
               (end-of-line)
               (insert-char ?\s (- time-start-col (current-column)))
               (insert time)
+              (put-text-property (- (point) (length time)) (point)
+                                 'face 'datadog-chart-label)
               (setq last-time-column (current-column))))
           ))
         )))
@@ -498,7 +524,10 @@ Maybe we should relax that assumption at some point."
             (when (> (current-column) text-field-size)
               (goto-char (- (point) (+ text-field-size 1)))
               (delete-char text-field-size)
-              (insert (concat text "-")))))
+              (insert text)
+              (put-text-property (- (point) (length text)) (point)
+                                 'face 'datadog-chart-label)
+              (insert-char ?-))))
         ))
     ))
 
@@ -540,6 +569,54 @@ Maybe we should relax that assumption at some point."
       (concat string-val unit))
     ))
 
+;; Dash selection intervace
+
+(defvar datadog--current-dash nil)
+
+(defvar helm-source-datadog-dash-list
+  '((name . "Dash List")
+    (candidates . datadog--dash-list)
+    (action . (("Select Tile" . datadog-select-tile)))))
+
+(defun datadog--dash-list ()
+  (let ((dash-list (dogapi-dash-list)))
+    (mapcar (lambda (d)
+              (cons (format "%s (%s)"
+                            (cdr (assoc 'title d))
+                            (cdr (assoc 'description d)))
+                    (string-to-number (cdr (assoc 'id d)))))
+            (cdr (assoc 'dashes dash-list)))))
+
+(defun datadog-select-dash ()
+  (interactive)
+  (helm :sources '(helm-source-datadog-dash-list)))
+
+(defvar helm-source-datadog-select-tile
+  '((name . "Select Tile")
+    (candidates . datadog--dash-tiles)
+    (action . nil))) ;; FILL ME IN
+
+(defun datadog--get-dash-graphs (dash-object)
+  (cdr (assoc 'graphs (cdr (assoc 'dash dash-object)))))
+
+(defun datadog--queries-from-tile (tile)
+  (let ((tile-def (cdr (assoc 'definition tile))))
+    (mapcar (lambda (x) (cdr (assoc 'q x)))
+            (cdr (assoc 'requests tile-def)))))
+
+(defun datadog--dash-tiles ()
+  (let ((dash (dogapi-dash datadog--current-dash)))
+    (mapcar (lambda (tile)
+              (cons (cdr (assoc 'title tile))
+                    (datadog--queries-from-tile tile)))
+            (datadog--get-dash-graphs dash))))
+
+(defun datadog-select-tile (&optional dash-id)
+  (interactive)
+  (when dash-id
+    (setq datadog--current-dash dash-id))
+  (helm :sources '(helm-source-datadog-select-tile)))
+
 ;; Main entry function
 
 (defun datadog ()
@@ -561,6 +638,8 @@ Maybe we should relax that assumption at some point."
     (define-key map (kbd "f") 'datadog-go-forward)
     (define-key map (kbd "b") 'datadog-go-backward)
     (define-key map (kbd "r") 'datadog-refresh)
+    (define-key map (kbd "D") 'datadog-select-dash)
+    (define-key map (kbd "T") 'datadog-select-tile)
     map)
   "Datadog mode keymap")
 
@@ -586,6 +665,9 @@ Maybe we should relax that assumption at some point."
   (make-local-variable 'datadog--graph-origin)
 
   (setq show-trailing-whitespace nil)
+
+  ;; (setq font-lock-defaults
+        ;; ')
   (datadog--reset-graph))
 
 (provide 'datadog)
