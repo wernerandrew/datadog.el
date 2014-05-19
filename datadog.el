@@ -184,7 +184,7 @@ setting the interval directly through API requests."
         (datadog--render-graph)))
      ;; or, we're at the end, and can go forwards
      ((and (= next-idx 1)
-           (< datadog--looking-at-query (length datadog--all-queries)))
+           (< datadog--looking-at-query (- (length datadog--all-queries) 1)))
       (setq datadog--looking-at-query (+ datadog--looking-at-query 1))
       (datadog-metric-query (elt datadog--all-queries
                                  datadog--looking-at-query)))
@@ -279,6 +279,12 @@ setting the interval directly through API requests."
                              datadog--graph-sizes
                              (window-width)
                              (window-height))))
+
+(defun datadog--check-size-change (frame)
+  (let ((last-size datadog--graph-size))
+    (datadog--set-graph-size)
+    (when (not (equal last-size datadog--graph-size))
+      (datadog-refresh))))
 
 (defun datadog--set-graph-origin ()
   (when datadog--graph-size
@@ -765,6 +771,7 @@ Maybe we should relax that assumption at some point."
   (make-local-variable 'datadog--dash-cache)
   (make-local-variable 'datadog--query-cache)
 
+  ;; variable setup
   (setq show-trailing-whitespace nil)
   ;; setup caches
   ;; note strings as keys for the query
@@ -772,7 +779,10 @@ Maybe we should relax that assumption at some point."
   ;; and IDs as keys for the dash
   (setq datadog--dash-cache (make-hash-table))
 
+  ;; hook setup
+  (add-hook 'window-size-change-functions 'datadog--check-size-change)
+
+  ;; inital display
   (datadog--reset-graph))
 
 (provide 'datadog)
-   
