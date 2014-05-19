@@ -3,7 +3,7 @@
 ;; Copyright (C) 2014 Drew Werner
 
 ;; Author: Drew Werner <wernerandrew at gmail.com>
-;; Package-Requires:
+;; Package-Requires: helm
 ;; Version: 0.0.1alpha
 
 ;; LICENSE GOES HERE
@@ -50,12 +50,44 @@
   "Currently supported")
 
 (defvar datadog--time-spans
-  (list '(one-hour . 3600)
-        '(four-hours . 14400)
-        '(one-day . 86400)
-        '(one-week . 604800)))
+  '((one-hour . 3600)
+    (four-hours . 14400)
+    (one-day . 86400)
+    (one-week . 604800)))
 
-(defvar datadog-last-refresh-time nil)
+(defconst datadog--query-refresh-time
+  '((one-hour . 60)
+    (four-hours . 300)
+    (one-day . 1800)
+    (one-week . 3600)))
+
+(defconst datadog--dash-list-refresh-time 300)
+
+(defconst datadog--dash-refresh-time 300)
+
+(defvar datadog--dash-list nil
+  "Stored list of dashes so we don't always hit the server")
+
+(defvar datadog--query-cache nil
+  "Maps query string to (last-update-utc . result)")
+
+(defvar datadog--dash-cache nil
+  "Maps dash id to (last-update-utc . result)")
+
+(defun datadog--fetch-series (query interval from-utc to-utc)
+  "Get the query, but check the cache"
+  (let* ((query-str (datadog--make-query query interval))
+         (cached-result (gethash query-str datadog--query-cache)))
+    (if (or (not cached-result)
+            (> (- to-utc (car cached-result))
+               (cdr (assoc datadog--timeframe
+                           datadog--query-refresh-time))))
+        (let ((result (dogapi-metric-query query-str
+                                           (datadog--to-js-time from-utc)
+                                           (datadog--to-js-time to-utc))))
+          (puthash query-str (cons to-utc result) datadog--query-cache)
+          result)
+      (cdr cached-result))))
 
 ;; Functions that like, you know, map to series
 (defun datadog-metric-query (query &optional skip-render)
@@ -65,9 +97,7 @@
          (to-utc (datadog--utc-now))
          (from-utc (- to-utc offset))
          (interval (datadog--rollup-interval))
-         (series (dogapi-metric-query (datadog--make-query query interval)
-                                      (datadog--to-js-time from-utc)
-                                      (datadog--to-js-time to-utc))))
+         (series (datadog--fetch-series query interval from-utc to-utc)))
          ;; TODO: set interval through API!  This is a kludge
          ;; (rollup (datadog--rollup-method-for query)))
     (when series
@@ -84,10 +114,10 @@
         (datadog--render-graph)))))
 
 (defconst datadog--rollup-hack
-  (list '("}$" . "}.rollup(%d)")
-        '( "\\.rollup(\\([^0-9]*\\)[^)]*)" . ".rollup(\\1%d)")
-        '("}[ ]*\\." . "}.rollup(%d).")
-        '("}[ ]*)" . "}.rollup(%d))"))
+  '(("}$" . "}.rollup(%d)")
+    ( "\\.rollup(\\([^0-9]*\\)[^)]*)" . ".rollup(\\1%d)")
+    ("}[ ]*\\." . "}.rollup(%d).")
+    ("}[ ]*)" . "}.rollup(%d))"))
   "Kid tested. Mother approved.")
 
 (defun datadog--make-query (query interval)
@@ -382,16 +412,16 @@ setting the interval directly through API requests."
   (- ts (% ts interval)))
 
 (defconst datadog--ticks-for-timeframe
-  (list '(one-hour . 900)
-        '(four-hours . 3600)
-        '(one-day . 21600)
-        '(one-week . 172800)))
+  '((one-hour . 900)
+    (four-hours . 3600)
+    (one-day . 21600)
+    (one-week . 172800)))
 
 (defconst datadog--format-for-timeframe
-  (list '(one-hour . "%H:%M")
-        '(four-hours . "%H:%M")
-        '(one-day . "%H:%M")
-        '(one-week . "%b %d")))
+  '((one-hour . "%H:%M")
+    (four-hours . "%H:%M")
+    (one-day . "%H:%M")
+    (one-week . "%b %d")))
 
 (defun datadog--time-axis-ticks (start end interval tick-size)
 
@@ -575,11 +605,20 @@ Maybe we should relax that assumption at some point."
 
 (defvar helm-source-datadog-dash-list
   '((name . "Dash List")
-    (candidates . datadog--dash-list)
+    (candidates . datadog--make-dash-list)
     (action . (("Select Tile" . datadog-select-tile)))))
 
-(defun datadog--dash-list ()
-  (let ((dash-list (dogapi-dash-list)))
+(defun datadog--fetch-dash-list ()
+  (if (or (null datadog--dash-list)
+          (> (- (datadog--utc-now) (car datadog--dash-list))
+             datadog--dash-list-refresh-time))
+      (let ((dash-list (dogapi-dash-list)))
+        (setq datadog--dash-list (cons (datadog--utc-now) dash-list))
+        dash-list)
+    (cdr datadog--dash-list)))
+
+(defun datadog--make-dash-list ()
+  (let ((dash-list (datadog--fetch-dash-list)))
     (mapcar (lambda (d)
               (cons (format "%s (%s)"
                             (cdr (assoc 'title d))
@@ -663,11 +702,17 @@ Maybe we should relax that assumption at some point."
   (make-local-variable 'datadog--series-data)
   (make-local-variable 'datadog--graph-size)
   (make-local-variable 'datadog--graph-origin)
+  (make-local-variable 'datadog--dash-list)
+  (make-local-variable 'datadog--dash-cache)
+  (make-local-variable 'datadog--query-cache)
 
   (setq show-trailing-whitespace nil)
+  ;; setup caches
+  ;; note strings as keys for the query
+  (setq datadog--query-cache (make-hash-table :test 'equal))
+  ;; and IDs as keys for the dash
+  (setq datadog--dash-cache (make-hash-table))
 
-  ;; (setq font-lock-defaults
-        ;; ')
   (datadog--reset-graph))
 
 (provide 'datadog)
