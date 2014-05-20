@@ -29,10 +29,80 @@
 (defvar dogapi-application-key nil
   "Application key for Datadog API")
 
+(defvar dogapi-credentials-path "~/.emacs.d"
+  "Directory to persist the file described in
+`dogapi-credentials-file'")
+
+(defvar dogapi-credentials-file "dogapi-credentials"
+  "Name of file to store dogapi credentials")
+
+(defvar dogapi-save-credentials t
+  "Set to non-nil to persist api credentials to a file")
+
 (defconst dogapi-url-endpoints
   (list '(dogapi-get-dash-list . "dash")
         '(dogapi-get-dash . "dash/%d")
         '(dogapi-get-metric-series . "series/query")))
+
+;; Credentials management
+
+(defun dogapi--credentials-file-full-path ()
+  (expand-file-name
+   (concat (file-name-as-directory dogapi-credentials-path)
+           dogapi-credentials-file)))
+
+(defun dogapi--set-credentials-from-file ()
+  (let ((cred-file (dogapi--credentials-file-full-path)))
+    (if (file-exists-p cred-file)
+        (let ((cred-data (json-read-from-string
+                          (with-temp-buffer
+                            (insert-file-contents cred-file)
+                            (buffer-string)))))
+          (setq dogapi-api-key (cdr (assoc 'dogapi-api-key cred-data)))
+          (setq dogapi-application-key
+                (cdr (assoc 'dogapi-application-key cred-data)))
+          t)
+      nil)
+    ))
+
+(defun dogapi--save-credentials-to-file ()
+  (let* ((cred-file (dogapi--credentials-file-full-path))
+         (cred-data (list (cons 'dogapi-api-key dogapi-api-key)
+                          (cons 'dogapi-application-key dogapi-application-key))))
+    ;; lots must go right to save this
+    ;; credentials path must be a directory
+    (if (and (file-directory-p (expand-file-name dogapi-credentials-path))
+             (or (not (file-exists-p cred-file))
+                 (yes-or-no-p (format "Overwrite credentials file: %s "
+                                      cred-file))))
+        (with-temp-file cred-file
+          (insert (json-encode cred-data)))
+      (message "Error writing credentials to file."))))
+
+(defun dogapi--has-credentials ()
+  (not (or (null dogapi-api-key)
+           (null dogapi-application-key))))
+
+(defun dogapi--ensure-credentials ()
+  (unless (dogapi--has-credentials)
+    ;; first attempt: read from file
+    (when dogapi-save-credentials
+      (dogapi--set-credentials-from-file))
+    (unless (dogapi--has-credentials)
+      (dogapi-set-credentials))
+   ))
+
+(defun dogapi-set-credentials ()
+  "Specify the API key and Application key to be used"
+  (let* ((api-key (read-string "Enter api key: "))
+         (app-key (read-string "Enter application key: ")))
+    (if (and api-key app-key)
+        (progn
+          (setq dogapi-api-key api-key)
+          (setq dogapi-application-key app-key)
+          (when dogapi-save-credentials
+            (dogapi--save-credentials-to-file)))
+      (error "Couldn't set credentials"))))
 
 ;; External functions
 
@@ -59,6 +129,7 @@ Currently only a single query supported per call."
 
 (defun dogapi--request (request-name url-param extra-args)
   "docstring here"
+  (dogapi--ensure-credentials)
   (let* ((url (dogapi--request-url request-name url-param extra-args))
           (url-request-method "GET"))
 
