@@ -682,12 +682,18 @@ Maybe we should relax that assumption at some point."
         dash-list)
     (cdr datadog--dash-list)))
 
+(defun datadog--make-title (dash-info)
+  (replace-regexp-in-string
+   "[[:space:]]+"
+   " "
+   (format "%s (%s)"
+           (cdr (assoc 'title d))
+           (cdr (assoc 'description d)))))
+
 (defun datadog--make-dash-list ()
   (let ((dash-list (datadog--fetch-dash-list)))
     (mapcar (lambda (d)
-              (cons (format "%s (%s)"
-                            (cdr (assoc 'title d))
-                            (cdr (assoc 'description d)))
+              (cons (datadog--make-title d)
                     (string-to-number (cdr (assoc 'id d)))))
             (cdr (assoc 'dashes dash-list)))))
 
