@@ -79,8 +79,8 @@ Most commonly, this is all queries within a graph tile.")
 (defvar datadog--query-cache nil
   "Maps query string to (last-update-utc . result)")
 
-(defvar datadog--dash-cache nil
-  "Maps dash id to (last-update-utc . result)")
+(defvar datadog--dash-tiles nil
+  "Stores tile definitions for current dash")
 
 (defun datadog--fetch-series (query interval from-utc to-utc)
   "Get the query, but check the cache"
@@ -652,7 +652,7 @@ Maybe we should relax that assumption at some point."
       (concat string-val unit))
     ))
 
-;; Dash selection intervace
+;; Dash selection interface
 
 (defvar datadog--current-dash-id nil)
 
@@ -696,8 +696,15 @@ Maybe we should relax that assumption at some point."
     (mapcar (lambda (x) (cdr (assoc 'q x)))
             (cdr (assoc 'requests tile-def)))))
 
+(defun datadog--fetch-dash (dash-id)
+  (when (or (not datadog--dash-tiles)
+            (not (= (car datadog--dash-tiles) dash-id)))
+    (setq datadog--dash-tiles (cons dash-id
+                                    (dogapi-dash dash-id))))
+  (cdr datadog--dash-tiles))
+
 (defun datadog--dash-tiles ()
-  (let ((dash (dogapi-dash datadog--current-dash-id)))
+  (let ((dash (datadog--fetch-dash datadog--current-dash-id)))
     (mapcar (lambda (tile)
               (let ((tile-title (cdr (assoc 'title tile))))
                 (cons tile-title
@@ -722,6 +729,32 @@ Maybe we should relax that assumption at some point."
       (setq datadog--all-queries queries)
       (datadog-metric-query (car queries)))))
 
+;; Timeframe controls
+
+(defun datadog-timeframe-one-hour ()
+  (interactive)
+  (datadog--set-timeframe 'one-hour))
+
+(defun datadog-timeframe-four-hours ()
+  (interactive)
+  (datadog--set-timeframe 'four-hours))
+
+(defun datadog-timeframe-one-day ()
+  (interactive)
+  (datadog--set-timeframe 'one-day))
+
+(defun datadog-timeframe-one-week ()
+  (interactive)
+  (datadog--set-timeframe 'one-week))
+
+(defun datadog--set-timeframe (timeframe)
+  (let ((old-timeframe datadog--timeframe))
+    (when (not (eq old-timeframe timeframe))
+      (setq datadog--timeframe timeframe)
+      ;; for now, this invalidates our query cache
+      (clrhash datadog--query-cache)
+      (datadog-refresh))))
+
 ;; Main entry function
 
 (defun datadog ()
@@ -745,6 +778,12 @@ Maybe we should relax that assumption at some point."
     (define-key map (kbd "r") 'datadog-refresh)
     (define-key map (kbd "D") 'datadog-select-dash)
     (define-key map (kbd "T") 'datadog-select-tile)
+
+    ;; timeframes
+    (define-key map (kbd "1") 'datadog-timeframe-one-hour)
+    (define-key map (kbd "4") 'datadog-timeframe-four-hours)
+    (define-key map (kbd "d") 'datadog-timeframe-one-day)
+    (define-key map (kbd "w") 'datadog-timeframe-one-week)
     map)
   "Datadog mode keymap")
 
@@ -771,7 +810,6 @@ Maybe we should relax that assumption at some point."
   (make-local-variable 'datadog--graph-size)
   (make-local-variable 'datadog--graph-origin)
   (make-local-variable 'datadog--dash-list)
-  (make-local-variable 'datadog--dash-cache)
   (make-local-variable 'datadog--query-cache)
 
   ;; variable setup
@@ -779,8 +817,6 @@ Maybe we should relax that assumption at some point."
   ;; setup caches
   ;; note strings as keys for the query
   (setq datadog--query-cache (make-hash-table :test 'equal))
-  ;; and IDs as keys for the dash
-  (setq datadog--dash-cache (make-hash-table))
 
   ;; hook setup
   (add-hook 'window-size-change-functions 'datadog--check-size-change)
