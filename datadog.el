@@ -129,26 +129,38 @@ Most commonly, this is all queries within a graph tile.")
   (setq datadog--looking-at-query 0)
   (datadog-metric-query query))
 
-(defconst datadog--rollup-hack
+(defconst datadog--basic-rollup-hack
   '(("}$" . "}.rollup(%d)")
     ( "\\.rollup(\\([^0-9]*\\)[^)]*)" . ".rollup(\\1%d)")
     ("}[ ]*\\." . "}.rollup(%d).")
     ("}[ ]*)" . "}.rollup(%d))"))
   "Kid tested. Mother approved.")
 
+(defconst datadog--multi-series-hack
+  '(("}[ ]*,[ ]*" . "}.rollup(%d),")))
+
+(defconst datadog--series-arithmetic-hack
+  '(( "}[ ]*\\([\\+/\\*\\-]\\)" . "}.rollup(%d) \\1 ")))
+
 (defun datadog--make-query (query interval)
   "Does some regex substitutions to ensure a proper interval
 Hopefully to go the way of the dodo when / if we support
 setting the interval directly through API requests."
-  (defun maybe-substitute (patterns)
+  (defun maybe-substitute (original-query patterns)
     (if patterns
         (let ((pat (caar patterns))
               (subst (format (cdar patterns) interval)))
-          (if (string-match pat query)
-              (replace-regexp-in-string pat subst query)
-            (maybe-substitute (cdr patterns))))
-      query))
-  (maybe-substitute datadog--rollup-hack))
+          (if (string-match pat original-query)
+              (replace-regexp-in-string pat subst original-query)
+            (maybe-substitute original-query (cdr patterns))))
+      original-query))
+  (let ((new-query query))
+    (setq new-query (maybe-substitute new-query
+                                      datadog--basic-rollup-hack))
+    (setq new-query (maybe-substitute new-query
+                                      datadog--multi-series-hack))
+    (setq new-query (maybe-substitute new-query
+                                      datadog--series-arithmetic-hack))))
 
 (defun datadog--rollup-interval ()
   (let* ((time-window (cdr (assoc datadog--timeframe
