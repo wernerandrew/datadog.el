@@ -211,13 +211,13 @@ setting the interval directly through API requests."
   (interactive)
   (datadog--checked-nav -1))
 
-(defun datadog-go-forward ()
+(defun datadog-timecursor-forward ()
   (interactive)
-  nil)
+  (datadog--shift-timecursor datadog--active-interval))
 
-(defun datadog-go-backward ()
+(defun datadog-timecursor-backward ()
   (interactive)
-  nil)
+  (datadog--shift-timecursor (- datadog--active-interval)))
 
 (defun datadog-refresh ()
   (interactive)
@@ -237,18 +237,22 @@ setting the interval directly through API requests."
 
 ;; maybe could have done this as a bunch of alists,
 ;; but I'm lazy (and maybe stupid)
+(defconst datadog--dim-names
+  '(margin-below margin-left margin-top width height)
+  "Names we use to refer to the graph size factors,
+defined in `datadog--graph-sizes'")
+
 (defconst datadog--graph-sizes
   '((0 0 0 40 8)
-    (3 4 2 60 20)
-    (3 4 2 120 40)))
+    (3 4 3 60 20)
+    (3 4 3 60 30)
+    (3 4 3 60 40)
+    (3 4 3 120 40)))
 
 (defvar datadog--graph-size nil)
 
 (defvar datadog--graph-origin nil
   "(column, row) pair")
-
-(defvar datadog--dim-names
-  '(margin-below margin-left margin-top width height))
 
 (defun datadog--get-graph-dim (dim-name &optional dims)
   "If dims not provided, defaults to datadog--graph-size"
@@ -401,9 +405,7 @@ is calculated with regard to the known graph dimensions"
         (when (not (looking-at "^$"))
           (kill-line))
         (insert-char ?\s h-offset)
-        (insert title)
-        (put-text-property (- (point) (length title)) (point)
-                           'face 'datadog-chart-title)))
+        (datadog--insert-face title 'datadog-chart-title)))
     ))
 
 (defun datadog--set-tile-title (title)
@@ -435,6 +437,27 @@ is calculated with regard to the known graph dimensions"
     ('t :foreground "black"))
   "Color for time and value labels on graph"
   :group 'datadog-faces)
+
+(defface datadog-chart-highlight-bar
+  '((((class color) (min-colors 8))
+     :foreground "magenta"
+     :background "magenta")
+    (t :inverse-video nil))
+  "Face for bars when selected by timecursor"
+  :group 'datadog-faces)
+
+(defface datadog-chart-timecursor
+  '((((class color) (min-colors 8) (background dark))
+     :foreground "white"
+     :background "white")
+    (t :inverse-video t))
+  "Face for chart area with timecursor"
+  :group 'datadog-faces)
+
+(defun datadog--set-face (face-name start &optional end)
+  "Set text face at start, or optionally from start to end"
+  (let ((end (or end (+ start 1))))
+    (put-text-property start end 'face face-name)))
 
 (defun datadog--insert-face (text face-name)
   (let* ((start (point))
@@ -492,6 +515,18 @@ defined state variables, including at least
 
   ;; but always draw t-ticks
   (datadog--draw-t-ticks)
+  ;; try to keep the last timecursor, if possible,
+  ;; by trying to use a bounds-checked version of it.
+  ;; otherwise default to the to current to-timestamp
+  ;; (let* ((raw-ts (if datadog--timecursor-at
+                     ;; (min datadog--active-to-ts
+                          ;; (max datadog--active-from-ts
+                               ;; datadog--timecursor-at))
+                   ;; datadog--active-to-ts))
+         ;; ;; and we ensure it aligns with our interval
+         ;; (current-ts (- raw-ts (% raw-ts datadog--active-interval))))
+         ;; (datadog--timecursor current-ts))
+  (datadog--timecursor datadog--active-to-ts)
   ;; and end up in some vaguely sensible place
   (goto-char (point-min))
   ))
@@ -516,9 +551,95 @@ of the line where you started."
 
 ;; Timecursor routines
 
-(defun datadog--timecursor (ts)
-  (let ((col (datadog--scale-t ts)))
-    nil))
+(defvar datadog--timecursor-at nil
+  "Current time being pointed at")
+
+(defun datadog--timecursor (timestamp)
+  "Set the timecursor at a given time.  Requires a valid
+time scale and a valid `datadog--graph-origin', so only
+call it if you know what you're doing."
+  ;; Scaling helper
+  (defun col-for-time (ts)
+    (- (datadog--scale-t ts t)) 1)
+    ;; (+ 2 (datadog--scale-t ts t)))
+  ;; Formatting helper
+  (defun format-column (bar-face blank-face col-num start-row end-row)
+    (goto-line start-row)
+    (while (< (line-number-at-pos) end-row)
+      (goto-char (+ (point) col-num))
+      (if (looking-at " ")
+          (datadog--set-face blank-face (point))
+        (datadog--set-face bar-face (point)))
+      (forward-line 1)))
+
+  ;; Set the global timestamp value if within graph bounds
+  ;; or if null (which turns it off, in effect
+  (let* ((buffer-read-only nil)
+         (new-ts (cond ((< timestamp datadog--active-from-ts)
+                        datadog--active-from-ts)
+                       ((> timestamp datadog--active-to-ts)
+                        datadog--active-to-ts)
+                       (t timestamp)))
+         (old-ts datadog--timecursor-at)
+         (old-col-num (when old-ts (col-for-time old-ts)))
+         (new-col-num (col-for-time new-ts))
+         (graph-end (cdr datadog--graph-origin))
+         (graph-start (- graph-end (datadog--get-graph-dim 'height))))
+
+    (when old-col-num
+      (format-column 'datadog-chart-area nil
+                     old-col-num graph-start graph-end))
+    (format-column 'datadog-chart-highlight-bar 'datadog-chart-timecursor
+                   new-col-num graph-start graph-end)
+
+    (datadog--draw-tooltip (datadog--value-at new-ts) new-col-num)
+    ;; and update so we know what to erase next time
+    (setq datadog--timecursor-at new-ts)
+    ))
+
+(defun datadog--shift-timecursor (delta)
+  "Convenience function for bumping the timecursor
+position in a certain direction"
+  (datadog--timecursor (+ datadog--timecursor-at delta)))
+
+(defun datadog--draw-tooltip (value column)
+  ;; need at least 3 lines of margin to show tooltip
+  (when (> (datadog--get-graph-dim 'margin-top) 3)
+    (let* ((buffer-read-only nil)
+           (n-chars (length value))
+           (w (window-width))
+           (start-col (if (< column (/ w 2))
+                          (- column n-chars)
+                        column))
+           ;; start line goes immediately above graph
+           (start-line (- (cdr datadog--graph-origin)
+                          (+ (datadog--get-graph-dim 'height) 1))))
+      (goto-line start-line)
+      (unless (looking-at "^$")
+        (kill-line))
+      (insert-char ?\s start-col)
+      (insert value))
+    ))
+
+(defun datadog--value-at (timestamp &optional js-time)
+  "Get the value of the current series at the given timestamp.
+If js-time is omitted or nil, assumes that timestamp is given in
+seconds.  Otherwise, it's in milliseconds."
+  (let* ((ts (if js-time timestamp (* timestamp 1000)))
+         (points (cdr (assoc 'pointlist
+                             (elt datadog--current-result 0))))
+         (num-points (length points))
+         (current 0)
+         (result nil))
+
+    (while (and (< current num-points)
+                (not result))
+      (let ((current-point (elt points current)))
+        (when (= ts (elt current-point 0))
+          (setq result (elt current-point 1)))
+        (setq current (+ current 1))))
+    result
+    ))
 
 ;; Scaling and tick formatting
 
@@ -536,10 +657,10 @@ of the line where you started."
     (one-day . "%H:%M")
     (one-week . "%b %d")))
 
-(defun datadog--time-axis-ticks (start end interval tick-size)
-  (defun closest-below (ts interval)
-    (- ts (% ts interval)))
+(defun datadog--closest-below (ts interval)
+  (- ts (% ts interval)))
 
+(defun datadog--time-axis-ticks (start end interval tick-size)
   (let* ((current (datadog--closest-below end tick-size))
          (ticks nil))
     (while (> current start)
@@ -646,9 +767,7 @@ Maybe we should relax that assumption at some point."
             (when (> (current-column) text-field-size)
               (goto-char (- (point) (+ text-field-size 1)))
               (delete-char text-field-size)
-              (insert text)
-              (put-text-property (- (point) (length text)) (point)
-                                 'face 'datadog-chart-label)
+              (datadog--insert-face text 'datadog-chart-label)
               (insert-char ?-))))
         ))
     ))
@@ -681,16 +800,17 @@ Maybe we should relax that assumption at some point."
   (defun truncate-to-precision (x p)
     (let ((scale (expt 10.0 p)))
       (number-to-string (/ (truncate x (/ 1 scale)) scale))))
+  (if (null x) ;; what if, like, this isn't even a number, maaan
+      "NaN"
+    (let* ((scale-data (scale-number x 1.0 "" datadog--number-scale))
+           (unit (car scale-data))
+           (val (cdr scale-data))
+           (precision (if (= (length unit) 0) 3 datadog--precision))
+           (string-val (truncate-to-precision val precision)))
 
-  (let* ((scale-data (scale-number x 1.0 "" datadog--number-scale))
-         (unit (car scale-data))
-         (val (cdr scale-data))
-         (precision (if (= (length unit) 0) 3 datadog--precision))
-         (string-val (truncate-to-precision val precision)))
-
-    (if (= (length unit) 0)
-        (strip-trailing-zeros string-val)
-      (concat string-val unit))
+      (if (= (length unit) 0)
+          (strip-trailing-zeros string-val)
+        (concat string-val unit)))
     ))
 
 ;; Dash selection interface
@@ -823,8 +943,8 @@ a list of queries."
     (define-key map (kbd "m") 'datadog-explore-metric)
     (define-key map (kbd "n") 'datadog-next-series)
     (define-key map (kbd "p") 'datadog-previous-series)
-    (define-key map (kbd "f") 'datadog-go-forward)
-    (define-key map (kbd "b") 'datadog-go-backward)
+    (define-key map (kbd "f") 'datadog-timecursor-forward)
+    (define-key map (kbd "b") 'datadog-timecursor-backward)
     (define-key map (kbd "r") 'datadog-refresh)
     (define-key map (kbd "D") 'datadog-select-dash)
     (define-key map (kbd "T") 'datadog-select-tile)
