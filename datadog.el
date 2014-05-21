@@ -352,7 +352,8 @@ be defined, as well as `datadog--graph-size'."
   (datadog--set-graph-size)
   (datadog--set-graph-origin)
   (datadog--clear-chart-area)
-  (datadog--draw-axes))
+  (datadog--draw-axes)
+  (setq datadog--timecursor-at nil))
 
 (defun datadog--series-extent (points)
   (let* ((vals (mapcar (lambda (p) (elt p 1)) points)))
@@ -456,8 +457,9 @@ is calculated with regard to the known graph dimensions"
 
 (defun datadog--set-face (face-name start &optional end)
   "Set text face at start, or optionally from start to end"
-  (let ((end (or end (+ start 1))))
-    (put-text-property start end 'face face-name)))
+  (save-excursion
+    (let ((end (or end (+ start 1))))
+      (put-text-property start end 'face face-name))))
 
 (defun datadog--insert-face (text face-name)
   (let* ((start (point))
@@ -560,14 +562,17 @@ time scale and a valid `datadog--graph-origin', so only
 call it if you know what you're doing."
   ;; Scaling helper
   (defun col-for-time (ts)
-    (- (datadog--scale-t ts t)) 1)
-    ;; (+ 2 (datadog--scale-t ts t)))
+    (datadog--scale-t ts t))
+
   ;; Formatting helper
   (defun format-column (bar-face blank-face col-num start-row end-row)
     (goto-line start-row)
+    (beginning-of-line)
+    (forward-char 1) ;; FIXME: why do I need this?
+
     (while (< (line-number-at-pos) end-row)
-      (goto-char (+ (point) col-num))
-      (if (looking-at " ")
+      (forward-char col-num)
+      (if (looking-at "[[:space:]]")
           (datadog--set-face blank-face (point))
         (datadog--set-face bar-face (point)))
       (forward-line 1)))
@@ -592,7 +597,9 @@ call it if you know what you're doing."
     (format-column 'datadog-chart-highlight-bar 'datadog-chart-timecursor
                    new-col-num graph-start graph-end)
 
-    (datadog--draw-tooltip (datadog--value-at new-ts) new-col-num)
+    (datadog--draw-tooltip
+     (datadog--format-number (datadog--value-at new-ts))
+     new-col-num)
     ;; and update so we know what to erase next time
     (setq datadog--timecursor-at new-ts)
     ))
@@ -604,19 +611,19 @@ position in a certain direction"
 
 (defun datadog--draw-tooltip (value column)
   ;; need at least 3 lines of margin to show tooltip
-  (when (> (datadog--get-graph-dim 'margin-top) 3)
+  (when (>= (datadog--get-graph-dim 'margin-top) 3)
     (let* ((buffer-read-only nil)
            (n-chars (length value))
            (w (window-width))
-           (start-col (if (< column (/ w 2))
-                          (- column n-chars)
-                        column))
+           (start-col (- column n-chars))
            ;; start line goes immediately above graph
            (start-line (- (cdr datadog--graph-origin)
-                          (+ (datadog--get-graph-dim 'height) 1))))
+                          ;; FIXME: why do I need +1 here???
+                          (+ 1 (datadog--get-graph-dim 'height)))))
       (goto-line start-line)
-      (unless (looking-at "^$")
-        (kill-line))
+      (beginning-of-line)
+      (while (not (looking-at "$"))
+        (delete-char 1))
       (insert-char ?\s start-col)
       (insert value))
     ))
@@ -627,7 +634,8 @@ If js-time is omitted or nil, assumes that timestamp is given in
 seconds.  Otherwise, it's in milliseconds."
   (let* ((ts (if js-time timestamp (* timestamp 1000)))
          (points (cdr (assoc 'pointlist
-                             (elt datadog--current-result 0))))
+                             (elt datadog--current-result
+                                  datadog--looking-at-series))))
          (num-points (length points))
          (current 0)
          (result nil))
