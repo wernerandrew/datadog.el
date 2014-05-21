@@ -298,24 +298,43 @@ setting the interval directly through API requests."
 (defun datadog--set-graph-origin ()
   (when datadog--graph-size
     (let* ((extent (datadog--graph-extent))
+           (extra-height (- (window-height) (cdr extent)))
            (extra-width (- (window-width) (car extent))))
       (setq datadog--graph-origin
             (cons (+ (/ extra-width 2)
                      (datadog--get-graph-dim 'margin-left))
-                  (cdr extent))))))
+                  (+ (/ extra-height 2)
+                     (- (cdr extent)
+                        (datadog--get-graph-dim 'margin-below)))))
+      )))
 
 (defun datadog--clear-chart-area ()
+  (interactive)
   (let ((buffer-read-only nil))
     (erase-buffer)))
 
+(defun datadog--get-graph-start-line ()
+  "Little helper to tell us the first line on which to
+start rendering graph items."
+  (- (cdr datadog--graph-origin)
+     (+ (datadog--get-graph-dim 'height)
+        (datadog--get-graph-dim 'margin-top))))
+
 (defun datadog--draw-axes ()
+  "Draw the axes for the graph, without tick marks or any
+included graph data.  Requires `datadog--graph-origin' to
+be defined, as well as `datadog--graph-size'."
+  (interactive)
   (let* ((buffer-read-only nil)
          (graph-base (cdr datadog--graph-origin))
          (offset (car datadog--graph-origin))
-         (graph-max-col (+ 1 offset (datadog--get-graph-dim 'width))))
+         (graph-max-col (+ 1 offset (datadog--get-graph-dim 'width)))
+         (axes-start-line (+ (datadog--get-graph-start-line)
+                             (datadog--get-graph-dim 'margin-top))))
+
     (save-excursion
       (goto-char (point-min))
-      (newline (datadog--get-graph-dim 'margin-top))
+      (newline axes-start-line)
       (while (< (line-number-at-pos) graph-base)
         (insert-char ?\s offset)
         (insert-char ?|)
@@ -366,28 +385,32 @@ setting the interval directly through API requests."
     ))
 
 (defun datadog--set-title (title line-num)
+  "Where line number has a minimum value of 0, and the actual line
+is calculated with regard to the known graph dimensions"
   (let* ((buffer-read-only nil)
          (w (window-width))
-         (offset (max 0 (/ (- w (length title)) 2)))
+         (h-offset (max 0 (/ (- w (length title)) 2)))
+         (v-offset (datadog--get-graph-start-line))
          (title (if (> (length title) w)
                     (substring title 0 w)
                   title)))
-    (when (>= (datadog--get-graph-dim 'margin-top) line-num)
+
+    (when (> (datadog--get-graph-dim 'margin-top) line-num)
       (save-excursion
-        (goto-line line-num) ;; maybe don't hardcode this
+        (goto-line (+ v-offset line-num))
         (when (not (looking-at "^$"))
           (kill-line))
-        (insert-char ?\s offset)
+        (insert-char ?\s h-offset)
         (insert title)
         (put-text-property (- (point) (length title)) (point)
                            'face 'datadog-chart-title)))
     ))
 
 (defun datadog--set-tile-title (title)
-  (datadog--set-title title 1))
+  (datadog--set-title title 0))
 
 (defun datadog--set-graph-title (title)
-  (datadog--set-title title 2))
+  (datadog--set-title title 1))
 
 ;; Graphing face definitions
 (defface datadog-chart-area
@@ -413,8 +436,16 @@ setting the interval directly through API requests."
   "Color for time and value labels on graph"
   :group 'datadog-faces)
 
-(defun datadog--render-graph ()
+(defun datadog--insert-face (text face-name)
+  (let* ((start (point))
+         (end (+ start (length text))))
+    (insert text)
+    (put-text-property start end 'face face-name)))
 
+(defun datadog--render-graph ()
+  "All graph redrawing happens through here.  Relies on several
+defined state variables, including at least
+"
   (datadog--reset-graph)
 
   (let* ((buffer-read-only nil))
@@ -443,7 +474,8 @@ setting the interval directly through API requests."
           (datadog--set-graph-title (cdr (assoc 'expression series)))
           ;; and only then render the graph
           (goto-char (point-min))
-          (forward-line (datadog--get-graph-dim 'margin-top))
+          (forward-line (+ (datadog--get-graph-start-line)
+                           (datadog--get-graph-dim 'margin-top)))
 
 
           (while (< (line-number-at-pos) (cdr datadog--graph-origin))
@@ -451,10 +483,7 @@ setting the interval directly through API requests."
             (dolist (sc scaled)
               (insert-char ?\s (- (car sc) (current-column)))
               (if (> (line-number-at-pos) (cdr sc))
-                  (progn
-                    (insert-char ?#)
-                    (put-text-property (- (point) 1) (point)
-                                       'face 'datadog-chart-area))
+                  (datadog--insert-face "#" 'datadog-chart-area)
                 (insert-char ?\s)))
             (forward-line 1))
           ;; only draw y-axis ticks with data
@@ -466,37 +495,6 @@ setting the interval directly through API requests."
   ;; and end up in some vaguely sensible place
   (goto-char (point-min))
   ))
-
-;; TODO: use this rather than hardcoded tick sizes
-(defconst datadog--preferred-tick-spacings
-  '(10 30 60 120 300 600 1800 3600 10800 21600 86400 172800)
-  "spacings are in seconds, up to two days")
-
-;; little utility function here
-(defun datadog--closest-below (ts interval)
-  (- ts (% ts interval)))
-
-(defconst datadog--ticks-for-timeframe
-  '((one-hour . 900)
-    (four-hours . 3600)
-    (one-day . 21600)
-    (one-week . 172800)))
-
-(defconst datadog--format-for-timeframe
-  '((one-hour . "%H:%M")
-    (four-hours . "%H:%M")
-    (one-day . "%H:%M")
-    (one-week . "%b %d")))
-
-(defun datadog--time-axis-ticks (start end interval tick-size)
-
-  (let* ((current (datadog--closest-below end tick-size))
-         (ticks nil))
-    (while (> current start)
-      (setq ticks (cons (datadog--closest-below current interval) ticks))
-      (setq current (- current tick-size)))
-    ticks
-    ))
 
 (defun datadog--ensure-next-line-empty ()
   "When you need one.  Probably a little inefficient,
@@ -515,6 +513,40 @@ of the line where you started."
   ;; for whatever reason
   (previous-line)
   (beginning-of-line))
+
+;; Timecursor routines
+
+(defun datadog--timecursor (ts)
+  (let ((col (datadog--scale-t ts)))
+    nil))
+
+;; Scaling and tick formatting
+
+;; Time axis formatting
+
+(defconst datadog--ticks-for-timeframe
+  '((one-hour . 900)
+    (four-hours . 3600)
+    (one-day . 21600)
+    (one-week . 172800)))
+
+(defconst datadog--format-for-timeframe
+  '((one-hour . "%H:%M")
+    (four-hours . "%H:%M")
+    (one-day . "%H:%M")
+    (one-week . "%b %d")))
+
+(defun datadog--time-axis-ticks (start end interval tick-size)
+  (defun closest-below (ts interval)
+    (- ts (% ts interval)))
+
+  (let* ((current (datadog--closest-below end tick-size))
+         (ticks nil))
+    (while (> current start)
+      (setq ticks (cons (datadog--closest-below current interval) ticks))
+      (setq current (- current tick-size)))
+    ticks
+    ))
 
 (defun datadog--draw-t-ticks ()
   (let* ((timeframe datadog--timeframe)
@@ -547,17 +579,12 @@ of the line where you started."
               (forward-line)
               (end-of-line)
               (insert-char ?\s (- time-start-col (current-column)))
-              (insert time)
-              (put-text-property (- (point) (length time)) (point)
-                                 'face 'datadog-chart-label)
+              (datadog--insert-face time 'datadog-chart-label)
               (setq last-time-column (current-column))))
           ))
         )))
 
-;; Axis and chart formatting
-
-(defconst datadog--supported-query-timeframes
-  '(one-hour four-hours one-day one-week))
+;; Y-axis formatting
 
 (defun datadog--get-number-scale (x)
   (floor (log10 x)))
@@ -601,7 +628,7 @@ Maybe we should relax that assumption at some point."
          (axis-line (cdr datadog--graph-origin))
          (min-tick-spacing 2)
          (last-tick (+ axis-line min-tick-spacing 1))
-         (graph-top (datadog--get-graph-dim 'margin-top)))
+         (graph-top (datadog--get-graph-start-line)))
 
     (dolist (tick ticks)
       (let* ((line (floor (datadog--scale-y tick ymin yrange)))
@@ -625,6 +652,8 @@ Maybe we should relax that assumption at some point."
               (insert-char ?-))))
         ))
     ))
+
+;; Number formatting helpers
 
 (defvar datadog--number-scale
   '(("" . 1.0)
@@ -722,6 +751,8 @@ Maybe we should relax that assumption at some point."
   (cdr datadog--dash-tiles))
 
 (defun datadog--dash-tiles ()
+  "Data source for the formatted list mapping tile names to
+a list of queries."
   (let ((dash (datadog--fetch-dash datadog--current-dash-id)))
     (mapcar (lambda (tile)
               (let ((tile-title (cdr (assoc 'title tile))))
@@ -732,6 +763,7 @@ Maybe we should relax that assumption at some point."
             (datadog--get-dash-graphs dash))))
 
 (defun datadog-select-tile (&optional dash-id)
+  "Command to choose a tile, if there's a currently selected dash."
   (interactive)
   (when dash-id
     (setq datadog--current-dash-id dash-id))
