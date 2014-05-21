@@ -602,7 +602,9 @@ call it if you know what you're doing."
      new-col-num)
     ;; and update so we know what to erase next time
     (setq datadog--timecursor-at new-ts)
-    ))
+    )
+  ;; and reset to sompelace sensible
+  (goto-char (point-min)))
 
 (defun datadog--shift-timecursor (delta)
   "Convenience function for bumping the timecursor
