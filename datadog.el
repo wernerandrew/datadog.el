@@ -352,8 +352,7 @@ be defined, as well as `datadog--graph-size'."
   (datadog--set-graph-size)
   (datadog--set-graph-origin)
   (datadog--clear-chart-area)
-  (datadog--draw-axes)
-  (setq datadog--timecursor-at nil))
+  (datadog--draw-axes))
 
 (defun datadog--series-extent (points)
   (let* ((vals (mapcar (lambda (p) (elt p 1)) points)))
@@ -403,8 +402,8 @@ is calculated with regard to the known graph dimensions"
     (when (> (datadog--get-graph-dim 'margin-top) line-num)
       (save-excursion
         (goto-line (+ v-offset line-num))
-        (when (not (looking-at "^$"))
-          (kill-line))
+        (while (not (looking-at "$"))
+          (delete-char 1))
         (insert-char ?\s h-offset)
         (datadog--insert-face title 'datadog-chart-title)))
     ))
@@ -435,7 +434,7 @@ is calculated with regard to the known graph dimensions"
 (defface datadog-chart-label
   '((((class color) (min-colors 8) (background dark))
      :foreground "yellow")
-    ('t :foreground "black"))
+    (t :foreground "black"))
   "Color for time and value labels on graph"
   :group 'datadog-faces)
 
@@ -469,7 +468,7 @@ is calculated with regard to the known graph dimensions"
 
 (defun datadog--render-graph ()
   "All graph redrawing happens through here.  Relies on several
-defined state variables, including at least
+defined state variables, including at least: [FILL IN]
 "
   (datadog--reset-graph)
 
@@ -512,23 +511,28 @@ defined state variables, including at least
                 (insert-char ?\s)))
             (forward-line 1))
           ;; only draw y-axis ticks with data
-          (datadog--draw-y-ticks ymin ymax yrange))
+          (datadog--draw-y-ticks ymin ymax yrange)
+          ;; try to keep the last timecursor, if possible,
+          ;; by trying to use a bounds-checked version of it.
+          ;; otherwise default to the to current to-timestamp
+          (let* ((max-ts (truncate (/ (apply 'max
+                                             (mapcar (lambda (p)
+                                                       (elt p 0))
+                                                     points))
+                                      1000)))
+                 (min-ts datadog--active-from-ts)
+                 (raw-ts (if datadog--timecursor-at
+                             (min max-ts
+                                  (max min-ts datadog--timecursor-at))
+                           max-ts))
+                 ;; and we ensure it aligns with our interval
+                 (current-ts (- raw-ts (% raw-ts datadog--active-interval))))
+            (datadog--timecursor current-ts)))
+          ;; (datadog--timecursor datadog--active-to-ts))
       (datadog--set-graph-title (concat "No data: " datadog--active-query)))
 
   ;; but always draw t-ticks
   (datadog--draw-t-ticks)
-  ;; try to keep the last timecursor, if possible,
-  ;; by trying to use a bounds-checked version of it.
-  ;; otherwise default to the to current to-timestamp
-  ;; (let* ((raw-ts (if datadog--timecursor-at
-                     ;; (min datadog--active-to-ts
-                          ;; (max datadog--active-from-ts
-                               ;; datadog--timecursor-at))
-                   ;; datadog--active-to-ts))
-         ;; ;; and we ensure it aligns with our interval
-         ;; (current-ts (- raw-ts (% raw-ts datadog--active-interval))))
-         ;; (datadog--timecursor current-ts))
-  (datadog--timecursor datadog--active-to-ts)
   ;; and end up in some vaguely sensible place
   (goto-char (point-min))
   ))
@@ -544,8 +548,8 @@ of the line where you started."
       (newline)))
   ;; and is blank
   (beginning-of-line)
-  (when (not (looking-at "^$"))
-    (kill-line))
+  (while (not (looking-at "$"))
+    (delete-char 1))
   ;; this is kinda ugly, but save-excursion didn't work
   ;; for whatever reason
   (previous-line)
@@ -933,6 +937,8 @@ a list of queries."
       (setq datadog--timeframe timeframe)
       ;; for now, this invalidates our query cache
       (clrhash datadog--query-cache)
+      ;; and the timecursor position
+      (setq datadog--timecursor-at nil)
       (datadog-refresh))))
 
 ;; Main entry function
