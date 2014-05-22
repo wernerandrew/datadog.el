@@ -595,7 +595,7 @@ call it if you know what you're doing."
          (graph-end (cdr datadog--graph-origin))
          (graph-start (- graph-end (datadog--get-graph-dim 'height))))
 
-    (when old-col-num
+    (when (and old-col-num (>= old-col-num 0))
       (format-column 'datadog-chart-area nil
                      old-col-num graph-start graph-end))
     (format-column 'datadog-chart-highlight-bar 'datadog-chart-timecursor
