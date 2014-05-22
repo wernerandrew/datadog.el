@@ -941,6 +941,40 @@ a list of queries."
       (setq datadog--timecursor-at nil)
       (datadog-refresh))))
 
+;; Miscellaneous
+
+(defconst datadog--splash-screen-text
+  '("Welcome to"
+    "______  _______ _______ _______ ______   _____   ______"
+    "|     \\ |_____|    |    |_____| |     \\ |     | |  ____"
+    "|_____/ |     |    |    |     | |_____/ |_____| |_____|"
+    ""
+    "Press `D' (shift-D) to browse dashes."
+    "Press `m' to perform a metric query."
+    "Select the timeframe with `1', `4', `d' or `w'."
+    "C-h m for additional commands."))
+
+
+(defun datadog--splash-screen ()
+  (let* ((buffer-read-only nil)
+         (n-chars (apply 'max (mapcar 'length datadog--splash-screen-text)))
+         (h-offset (/ (- (window-width) n-chars) 2))
+         (v-offset (/ (- (window-height)
+                         (length datadog--splash-screen-text))
+                      2)))
+    (erase-buffer)
+    (if (and (>= h-offset 0)
+               (>= v-offset 0))
+        (progn
+          (newline v-offset)
+          (dolist (text datadog--splash-screen-text)
+            (insert-char ?\s h-offset)
+            (insert text)
+            (newline)))
+      ;; fall back to extremely simple text
+      ;; whould rarely be needed
+      (insert "Welcome to Datadog. C-h m for help."))))
+
 ;; Main entry function
 
 (defun datadog ()
@@ -1008,6 +1042,6 @@ a list of queries."
   (add-hook 'window-size-change-functions 'datadog--check-size-change)
 
   ;; inital display
-  (datadog--reset-graph))
+  (datadog--splash-screen))
 
 (provide 'datadog)
