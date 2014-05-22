@@ -254,10 +254,10 @@ defined in `datadog--graph-sizes'")
 
 (defconst datadog--graph-sizes
   '((0 0 0 40 8)
-    (3 4 3 60 20)
-    (3 4 3 60 30)
-    (3 4 3 60 40)
-    (3 4 3 120 40)))
+    (3 4 4 60 20)
+    (3 4 4 60 30)
+    (3 4 4 60 40)
+    (3 4 4 120 40)))
 
 (defvar datadog--graph-size nil)
 
@@ -464,6 +464,11 @@ is calculated with regard to the known graph dimensions"
   "Face for chart area with timecursor"
   :group 'datadog-faces)
 
+(defface datadog-chart-tooltip
+  '((t :inverse-video t))
+  "Face for value shown at timecursor"
+  :group 'datadog-faces)
+
 (defun datadog--set-face (face-name start &optional end)
   "Set text face at start, or optionally from start to end"
   (save-excursion
@@ -641,7 +646,7 @@ position in a certain direction"
       (while (not (looking-at "$"))
         (delete-char 1))
       (insert-char ?\s start-col)
-      (insert value))
+      (datadog--insert-face value 'datadog-chart-tooltip))
     ))
 
 (defun datadog--value-at (timestamp &optional js-time)
