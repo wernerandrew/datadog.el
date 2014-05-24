@@ -19,12 +19,17 @@
 ;; URL: http://github.com/wernerandrew/datadog.el
 ;; Version: 0.0.1alpha
 
-;; Commentary:
+;; Commentary: A simple interactive console for browsing Datadog
+;; dashes and performing metric queries.  Graphs are all rendered
+;; as time series, and for ease of rendering, only a limited set of
+;; time frames are supported.
 
 (require 'helm)
-
 (require 'dogapi)
 
+;; User customizable variables: none at this time (though see dogapi)
+
+;; Internal variables and functions
 ;; Time utilities
 
 (defun datadog--utc-now (&optional offset-secs)
@@ -374,6 +379,8 @@ be defined, as well as `datadog--graph-size'."
         (datadog--get-graph-dim 'height))))
 
 (defun datadog--scale-t (timestamp &optional not-js)
+  "Finds the correct column for a given time, expressed
+in absolute coordinates."
   (let* ((factor (if not-js 1 1000))
          (ts (truncate (/ timestamp factor))))
     (+ (car datadog--graph-origin) 1
@@ -419,27 +426,27 @@ is calculated with regard to the known graph dimensions"
 (defun datadog--set-graph-title (title)
   (datadog--set-title title 1))
 
-;; Graphing face definitions
+;; Faces we use when graphing
+
 (defface datadog-chart-area
   '((((class color) (min-colors 8))
      :foreground "blue"
      :background "blue")
-    (t :inverse-video t))
+    (t :inherit 'default :inverse-video t))
   "Color for showing chart area"
   :group 'datadog-faces)
 
-;; FIXME: uh, black might not be the best default foreground
 (defface datadog-chart-title
-  '((((class color) (min-colors 8) (background dark))
+  '((((class color) (min-colors 8))
      :foreground "green")
-    (t :foreground "black"))
+    (t :inherit 'default))
   "Color for showing chart title"
   :group 'datadog-faces)
 
 (defface datadog-chart-label
   '((((class color) (min-colors 8) (background dark))
      :foreground "yellow")
-    (t :foreground "black"))
+    (t :inherit 'default))
   "Color for time and value labels on graph"
   :group 'datadog-faces)
 
@@ -447,7 +454,7 @@ is calculated with regard to the known graph dimensions"
   '((((class color) (min-colors 8))
      :foreground "magenta"
      :background "magenta")
-    (t :inverse-video nil))
+    (t :inherit 'default :inverse-video nil))
   "Face for bars when selected by timecursor"
   :group 'datadog-faces)
 
@@ -687,6 +694,8 @@ seconds.  Otherwise, it's in milliseconds."
     ticks))
 
 (defun datadog--draw-t-ticks ()
+  "Helper to draw time axis ticks.  Should only be called from
+`datadog--render-graph'."
   (let* ((timeframe datadog--timeframe)
          (tick-size (cdr (assoc timeframe
                                 datadog--ticks-for-timeframe)))
@@ -720,7 +729,7 @@ seconds.  Otherwise, it's in milliseconds."
               (datadog--insert-face time 'datadog-chart-label)
               (setq last-time-column (current-column)))))))))
 
-;; Y-axis formatting
+;; Y-axis formatting helpers
 
 (defun datadog--get-number-scale (x)
   (floor (log10 x)))
@@ -757,6 +766,8 @@ Maybe we should relax that assumption at some point."
     ticks))
 
 (defun datadog--draw-y-ticks (ymin ymax yrange)
+  "Helper function to draw ticks and values on the y-axis.
+Should only be called from `datadog--render-graph'."
   (let* ((ticks (datadog--y-axis-ticks ymin ymax))
          (axis-offset (car datadog--graph-origin))
          (axis-line (cdr datadog--graph-origin))
@@ -857,6 +868,8 @@ Maybe we should relax that assumption at some point."
             (cdr (assoc 'dashes dash-list)))))
 
 (defun datadog-select-dash ()
+  "Opens an interactive dialog to browse your list of Datadog dashes.
+Selecting a dash will bring up a follow-up dialog to choose a tile."
   (interactive)
   (helm :sources '(helm-source-datadog-dash-list)))
 
@@ -912,22 +925,27 @@ a list of queries."
 ;; Timeframe controls
 
 (defun datadog-timeframe-one-hour ()
+  "Set the query timeframe to one hour"
   (interactive)
   (datadog--set-timeframe 'one-hour))
 
 (defun datadog-timeframe-four-hours ()
+  "Set the query timeframe to four hours"
   (interactive)
   (datadog--set-timeframe 'four-hours))
 
 (defun datadog-timeframe-one-day ()
+  "Set the query timeframe to one day"
   (interactive)
   (datadog--set-timeframe 'one-day))
 
 (defun datadog-timeframe-one-week ()
+  "Set the query timeframe to one week"
   (interactive)
   (datadog--set-timeframe 'one-week))
 
 (defun datadog--set-timeframe (timeframe)
+  "Helper function to change the timeframe."
   (let ((old-timeframe datadog--timeframe))
     (when (not (eq old-timeframe timeframe))
       (setq datadog--timeframe timeframe)
@@ -952,6 +970,7 @@ a list of queries."
 
 
 (defun datadog--splash-screen ()
+  "Currently displayed only on start"
   (let* ((buffer-read-only nil)
          (n-chars (apply 'max (mapcar 'length datadog--splash-screen-text)))
          (h-offset (/ (- (window-width) n-chars) 2))
@@ -974,6 +993,7 @@ a list of queries."
 ;; Main entry function
 
 (defun datadog ()
+  "Opens a Datadog session, or switches to an existing session."
   (interactive)
   (let ((existing-buffer (get-buffer "*datadog*")))
     (if existing-buffer
