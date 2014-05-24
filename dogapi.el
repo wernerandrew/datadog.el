@@ -103,7 +103,6 @@ dogapi requests."
 Currently only a single query supported per call."
   (let* ((response (dogapi--request
                     'dogapi-get-metric-series
-                    nil
                     (list (cons "q" query)
                           (cons "from" from-ts)
                           (cons "to" to-ts))))
@@ -111,23 +110,23 @@ Currently only a single query supported per call."
     series))
 
 (defun dogapi-dash-list ()
-  (dogapi--request 'dogapi-get-dash-list nil nil))
+  (dogapi--request 'dogapi-get-dash-list))
 
 (defun dogapi-dash (dash-id)
-  (dogapi--request 'dogapi-get-dash dash-id nil))
+  (dogapi--request 'dogapi-get-dash nil dash-id))
 
 ;; Private API helpers
 
-(defun dogapi--request (request-name url-param extra-args)
+(defun dogapi--request (request-name &optional request-params url-param)
   "All API requests go through here.  The request-name parameter,
 is mandatory and must be one of the keys defined in `dogapi-url-endpoints'.
 
-Optional arguments include extra-args, which is a list of cons cells
+Optional arguments include request-params, which is a list of cons cells
 that pair string keys with string values.  The url-param argument,
 also optional, can be used to pass a parameter that constitues part
 of the endpoint URL (e.g., as in `dogapi-dash')."
   (dogapi--ensure-credentials)
-  (let* ((url (dogapi--request-url request-name url-param extra-args))
+  (let* ((url (dogapi--request-url request-name request-params url-param))
          (url-request-method "GET"))
 
     (dogapi--json-from-buffer (url-retrieve-synchronously url))))
@@ -146,7 +145,7 @@ of the endpoint URL (e.g., as in `dogapi-dash')."
 
 ;; URL building helpers
 
-(defun dogapi--request-url (request-name url-param extra-args)
+(defun dogapi--request-url (request-name request-params url-param)
   "Generates the actual URL to be used"
   (let* ((request-base (cdr (assoc request-name dogapi-url-endpoints)))
          (request-path (if url-param
@@ -163,7 +162,7 @@ of the endpoint URL (e.g., as in `dogapi-dash')."
                (format "&%s=%s"
                        (url-hexify-string (car x))
                        (url-hexify-string (cdr x))))
-             extra-args ""))))
+             request-params ""))))
 
 (defun dogapi--get-api-base ()
   (format "api/v%d" dogapi-api-version))
