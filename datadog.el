@@ -210,8 +210,7 @@ setting the interval directly through API requests."
      ((or (> offset 1) (< offset -1))
       ;; FIXME: uh, don't throw an error here.
       (error "Can only move one spot for now!"))
-     (t (message (if (< next-idx 0) "Beginning of series" "End of series"))))
-    ))
+     (t (message (if (< next-idx 0) "Beginning of series" "End of series"))))))
 
 (defun datadog-next-series ()
   (interactive)
@@ -319,8 +318,7 @@ defined in `datadog--graph-sizes'")
                      (datadog--get-graph-dim 'margin-left))
                   (+ (/ extra-height 2)
                      (- (cdr extent)
-                        (datadog--get-graph-dim 'margin-below)))))
-      )))
+                        (datadog--get-graph-dim 'margin-below))))))))
 
 (defun datadog--clear-chart-area ()
   (interactive)
@@ -394,9 +392,7 @@ be defined, as well as `datadog--graph-size'."
                               (> ts max-t)
                               (null val))
                           nil p)))
-                  points)
-          )
-    ))
+                  points))))
 
 (defun datadog--set-title (title line-num)
   "Where line number has a minimum value of 0, and the actual line
@@ -415,8 +411,7 @@ is calculated with regard to the known graph dimensions"
         (while (not (looking-at "$"))
           (delete-char 1))
         (insert-char ?\s h-offset)
-        (datadog--insert-face title 'datadog-chart-title)))
-    ))
+        (datadog--insert-face title 'datadog-chart-title)))))
 
 (defun datadog--set-tile-title (title)
   (datadog--set-title title 0))
@@ -530,27 +525,14 @@ defined state variables, including at least: [FILL IN]
           ;; try to keep the last timecursor, if possible,
           ;; by trying to use a bounds-checked version of it.
           ;; otherwise default to the to current to-timestamp
-          (let* ((max-ts (truncate (/ (apply 'max
-                                             (mapcar (lambda (p)
-                                                       (elt p 0))
-                                                     points))
-                                      1000)))
-                 (min-ts datadog--active-from-ts)
-                 (raw-ts (if datadog--timecursor-at
-                             (min max-ts
-                                  (max min-ts datadog--timecursor-at))
-                           max-ts))
-                 ;; and we ensure it aligns with our interval
-                 (current-ts (- raw-ts (% raw-ts datadog--active-interval))))
-            (datadog--timecursor current-ts)))
-          ;; (datadog--timecursor datadog--active-to-ts))
+          (datadog--timecursor (or datadog--timecursor-at
+                                   datadog--active-to-ts)))
       (datadog--set-graph-title (concat "No data: " datadog--active-query)))
 
   ;; but always draw t-ticks
   (datadog--draw-t-ticks)
   ;; and end up in some vaguely sensible place
-  (goto-char (point-min))
-  ))
+  (goto-char (point-min))))
 
 (defun datadog--ensure-next-line-empty ()
   "When you need one.  Probably a little inefficient,
@@ -575,14 +557,26 @@ of the line where you started."
 (defvar datadog--timecursor-at nil
   "Current time being pointed at")
 
-(defun datadog--timecursor (timestamp)
-  "Set the timecursor at a given time.  Requires a valid
-time scale and a valid `datadog--graph-origin', so only
-call it if you know what you're doing."
-  ;; Scaling helper
-  (defun col-for-time (ts)
-    (datadog--scale-t ts t))
+(defun datadog--closest-t (timestamp)
+  "Expects an epoch timestamp"
+  (let* ((series (elt datadog--current-result datadog--looking-at-series))
+         (points (cdr (assoc 'pointlist series)))
+         (i 0)
+         (out-ts nil))
+    (when points
+      (let ((max-ts (truncate (/ (apply 'max
+                                        (mapcar (lambda (p) (elt p 0))
+                                                points))
+                                 1000))))
+        (cond ((< timestamp datadog--active-from-ts) datadog--active-from-ts)
+              ((> timestamp max-ts) max-ts)
+              (t (datadog--closest-below timestamp
+                                         datadog--active-interval)))))))
 
+(defun datadog--timecursor (timestamp)
+  "Internal drawing routine to the timecursor at a given
+time, subject to a bounds check.  Expects an integer
+epoch."
   ;; Formatting helper
   (defun format-column (bar-face blank-face col-num start-row end-row)
     (goto-line start-row)
@@ -599,29 +593,26 @@ call it if you know what you're doing."
   ;; Set the global timestamp value if within graph bounds
   ;; or if null (which turns it off, in effect
   (let* ((buffer-read-only nil)
-         (new-ts (cond ((< timestamp datadog--active-from-ts)
-                        datadog--active-from-ts)
-                       ((> timestamp datadog--active-to-ts)
-                        datadog--active-to-ts)
-                       (t timestamp)))
+         (new-ts (datadog--closest-t timestamp))
          (old-ts datadog--timecursor-at)
-         (old-col-num (when old-ts (col-for-time old-ts)))
-         (new-col-num (col-for-time new-ts))
+         (old-col-num (when old-ts (datadog--scale-t old-ts t)))
+         (new-col-num (when new-ts (datadog--scale-t new-ts t)))
          (graph-end (cdr datadog--graph-origin))
          (graph-start (- graph-end (datadog--get-graph-dim 'height))))
 
+    ;; note that old column number *could* be out of range
     (when (and old-col-num (>= old-col-num 0))
       (format-column 'datadog-chart-area nil
                      old-col-num graph-start graph-end))
-    (format-column 'datadog-chart-highlight-bar 'datadog-chart-timecursor
-                   new-col-num graph-start graph-end)
+    (when new-col-num
+      (format-column 'datadog-chart-highlight-bar 'datadog-chart-timecursor
+                     new-col-num graph-start graph-end))
 
     (datadog--draw-tooltip
      (datadog--format-number (datadog--value-at new-ts))
      new-col-num)
     ;; and update so we know what to erase next time
-    (setq datadog--timecursor-at new-ts)
-    )
+    (setq datadog--timecursor-at new-ts))
   ;; and reset to sompelace sensible
   (goto-char (point-min)))
 
@@ -646,8 +637,7 @@ position in a certain direction"
       (while (not (looking-at "$"))
         (delete-char 1))
       (insert-char ?\s start-col)
-      (datadog--insert-face value 'datadog-chart-tooltip))
-    ))
+      (datadog--insert-face value 'datadog-chart-tooltip))))
 
 (defun datadog--value-at (timestamp &optional js-time)
   "Get the value of the current series at the given timestamp.
@@ -667,8 +657,7 @@ seconds.  Otherwise, it's in milliseconds."
         (when (= ts (elt current-point 0))
           (setq result (elt current-point 1)))
         (setq current (+ current 1))))
-    result
-    ))
+    result))
 
 ;; Scaling and tick formatting
 
@@ -695,8 +684,7 @@ seconds.  Otherwise, it's in milliseconds."
     (while (> current start)
       (setq ticks (cons (datadog--closest-below current interval) ticks))
       (setq current (- current tick-size)))
-    ticks
-    ))
+    ticks))
 
 (defun datadog--draw-t-ticks ()
   (let* ((timeframe datadog--timeframe)
@@ -730,9 +718,7 @@ seconds.  Otherwise, it's in milliseconds."
               (end-of-line)
               (insert-char ?\s (- time-start-col (current-column)))
               (datadog--insert-face time 'datadog-chart-label)
-              (setq last-time-column (current-column))))
-          ))
-        )))
+              (setq last-time-column (current-column)))))))))
 
 ;; Y-axis formatting
 
@@ -750,8 +736,7 @@ seconds.  Otherwise, it's in milliseconds."
        (cond ((< scaled-yrange 1) 0.1)
              ((< scaled-yrange 2) 0.5)
              ((< scaled-yrange 5) 1.0)
-             (t 2.0)))
-    ))
+             (t 2.0)))))
 
 (defun datadog--y-axis-ticks (ymin ymax)
   "For now, assumes that the range includes zero.
@@ -769,8 +754,7 @@ Maybe we should relax that assumption at some point."
     (while (> current ymin)
       (setq ticks (cons current ticks))
       (setq current (- current tick-size)))
-    ticks
-    ))
+    ticks))
 
 (defun datadog--draw-y-ticks (ymin ymax yrange)
   (let* ((ticks (datadog--y-axis-ticks ymin ymax))
@@ -797,9 +781,7 @@ Maybe we should relax that assumption at some point."
               (goto-char (- (point) (+ text-field-size 1)))
               (delete-char text-field-size)
               (datadog--insert-face text 'datadog-chart-label)
-              (insert-char ?-))))
-        ))
-    ))
+              (insert-char ?-))))))))
 
 ;; Number formatting helpers
 
@@ -839,8 +821,7 @@ Maybe we should relax that assumption at some point."
 
       (if (= (length unit) 0)
           (strip-trailing-zeros string-val)
-        (concat string-val unit)))
-    ))
+        (concat string-val unit)))))
 
 ;; Dash selection interface
 
@@ -1030,8 +1011,7 @@ a list of queries."
   (use-local-map datadog-mode-map)
 
   ;; local variable definitions
-  (datadog--init)
-  )
+  (datadog--init))
 
 (defun datadog--init ()
   (interactive)
