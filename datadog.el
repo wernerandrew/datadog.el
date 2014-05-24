@@ -181,6 +181,7 @@ setting the interval directly through API requests."
   (let* ((time-window (cdr (assoc datadog--timeframe
                                   datadog--time-spans)))
          (num-points (datadog--get-graph-dim 'width)))
+    ;; One week requires special work to get "nice" rollups
     (/ time-window num-points)))
 
 ;; Datadog keyboard commands
@@ -258,6 +259,8 @@ defined in `datadog--graph-sizes'")
 
 (defconst datadog--graph-sizes
   '((0 0 0 40 8)
+    (0 0 0 40 16)
+    (2 2 3 40 16)
     (3 4 4 60 20)
     (3 4 4 60 30)
     (3 4 4 60 40)
@@ -270,13 +273,25 @@ defined in `datadog--graph-sizes'")
 
 (defun datadog--get-graph-dim (dim-name &optional dims)
   "If dims not provided, defaults to datadog--graph-size"
+  ;; special case for one week
+  (defun week-adjusted-width (w)
+    "Helper that finds the largest number of points that still
+divides the week nicely.  Currently just finds the largest multiple
+of 28 (7*4) <= n"
+    (- w (% w 28)))
+  ;; helper to search the list
   (defun find-dim (dims dim-name names-list)
     (when dims
       (if (eq dim-name (car names-list))
           (car dims)
         (find-dim (cdr dims) dim-name (cdr names-list)))))
-  (let ((sz (or dims datadog--graph-size)))
-    (find-dim sz dim-name datadog--dim-names)))
+  (let* ((sz (or dims datadog--graph-size))
+         (dim (find-dim sz dim-name datadog--dim-names)))
+    ;; special handling for one week
+    (if (and (equal dim-name 'width)
+             (equal datadog--timeframe 'one-week))
+        (week-adjusted-width dim)
+      dim)))
 
 (defun datadog--graph-extent (&optional dims)
   "returns (width, height) pair"
