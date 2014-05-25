@@ -975,8 +975,8 @@ a list of queries."
               (let ((tile-title (cdr (assoc 'title tile))))
                 (cons tile-title
                       (list (cons 'title tile-title)
-                            (cons 'queries (datadog--queries-from-tile tile)))
-                      )))
+                            (cons 'queries
+                                  (datadog--queries-from-tile tile))))))
             (datadog--get-dash-graphs dash))))
 
 (defun datadog-select-tile (&optional dash-id)
