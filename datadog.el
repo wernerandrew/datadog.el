@@ -146,7 +146,7 @@ Most commonly, this is all queries within a graph tile.")
 
 (defconst datadog--basic-rollup-hack
   '(("}$" . "}.rollup(%d)")
-    ( "\\.rollup(\\([^0-9]*\\)[^)]*)" . ".rollup(\\1%d)")
+    ( "\\.rollup(\\([^0-9)]*\\)[^)]*)" . ".rollup(\\1,%d)")
     ("}[ ]*\\." . "}.rollup(%d).")
     ("}[ ]*)" . "}.rollup(%d))"))
   "Kid tested. Mother approved.")
