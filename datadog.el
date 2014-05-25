@@ -260,9 +260,43 @@ next lowest tick.  Helper function."
                                   (* num-ticks tick-size))
                                tick-size)))))
 
-(defun datadog-jump-to-scope ()
+(defun datadog--make-graph-list ()
+  ;; still experimenting with what's best
+  (defun format-scope (s)
+    (cdr (assoc 'scope s)))
+
+  (defun format-scope-and-metric (s)
+    (format "%s (%s)"
+            (cdr (assoc 'scope s))
+            (cdr (assoc 'metric s))))
+
+  (let ((format-func 'format-scope)
+        (metric-names nil)
+        (i -1))
+    ;; use different format strategy if metrics aren't unique
+    (mapcar (lambda (s)
+              (add-to-list 'metric-names (cdr (assoc 'metric s))))
+            datadog--current-result)
+    (when (> (length metric-names) 1)
+      (setq format-func 'format-scope-and-metric))
+    (mapcar (lambda (s)
+              (setq i (+ i 1))
+              (cons (funcall format-func s) i))
+            datadog--current-result)))
+
+(defun datadog--jump-set-graph (graph-idx)
+  (setq datadog--looking-at-series graph-idx)
+  (datadog--render-graph))
+
+(defun datadog-jump-to-graph ()
   (interactive)
-  nil)
+  (helm :sources
+        ;; can't pass a function name, alas
+        ;; due to scoping issues
+        (list (cons 'name "Select Graph by Scope")
+              (cons 'candidates (datadog--make-graph-list))
+              (cons 'action
+                    (list (cons "Select Graph" 'datadog--jump-set-graph))))))
 
 (defun datadog-refresh ()
   (interactive)
@@ -1049,6 +1083,7 @@ a list of queries."
     (define-key map (kbd "m") 'datadog-explore-metric)
     (define-key map (kbd "n") 'datadog-next-series)
     (define-key map (kbd "p") 'datadog-previous-series)
+    (define-key map (kbd "j") 'datadog-jump-to-graph)
     (define-key map (kbd "f") 'datadog-timecursor-forward)
     (define-key map (kbd "b") 'datadog-timecursor-backward)
     (define-key map (kbd "F") 'datadog-forward-tick)
