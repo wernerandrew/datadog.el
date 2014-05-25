@@ -184,7 +184,7 @@ setting the interval directly through API requests."
     ;; One week requires special work to get "nice" rollups
     (/ time-window num-points)))
 
-;; Datadog keyboard commands
+;; Navigation commands
 
 (defun datadog--checked-nav (offset)
   (interactive)
@@ -233,6 +233,36 @@ setting the interval directly through API requests."
 (defun datadog-timecursor-backward ()
   (interactive)
   (datadog--shift-timecursor (- datadog--active-interval)))
+
+(defun datadog--shift-timecursor (delta)
+  "Convenience function for bumping the timecursor
+position in a certain direction"
+  (datadog--timecursor (+ datadog--timecursor-at delta)))
+
+(defun datadog-forward-tick ()
+  (interactive)
+  (datadog--shift-by-tick 0 1))
+
+(defun datadog-backward-tick ()
+  (interactive)
+  (datadog--shift-by-tick -1 0))
+
+(defun datadog--shift-by-tick (num-secs num-ticks)
+  "Move cursor by num-secs and num-ticks, and then snap to
+next lowest tick.  Helper function."
+  (interactive)
+  (let ((tick-size (cdr (assoc datadog--timeframe
+                               datadog--ticks-for-timeframe))))
+    (when datadog--timecursor-at
+      (datadog--timecursor
+       (datadog--closest-below (+ datadog--timecursor-at
+                                  num-secs
+                                  (* num-ticks tick-size))
+                               tick-size)))))
+
+(defun datadog-jump-to-scope ()
+  (interactive)
+  nil)
 
 (defun datadog-refresh ()
   (interactive)
@@ -638,11 +668,6 @@ epoch."
   ;; and reset to sompelace sensible
   (goto-char (point-min)))
 
-(defun datadog--shift-timecursor (delta)
-  "Convenience function for bumping the timecursor
-position in a certain direction"
-  (datadog--timecursor (+ datadog--timecursor-at delta)))
-
 (defun datadog--draw-tooltip (value column)
   ;; need at least 3 lines of margin to show tooltip
   (when (>= (datadog--get-graph-dim 'margin-top) 3)
@@ -1026,6 +1051,8 @@ a list of queries."
     (define-key map (kbd "p") 'datadog-previous-series)
     (define-key map (kbd "f") 'datadog-timecursor-forward)
     (define-key map (kbd "b") 'datadog-timecursor-backward)
+    (define-key map (kbd "F") 'datadog-forward-tick)
+    (define-key map (kbd "B") 'datadog-backward-tick)
     (define-key map (kbd "r") 'datadog-refresh)
     (define-key map (kbd "D") 'datadog-select-dash)
     (define-key map (kbd "T") 'datadog-select-tile)
