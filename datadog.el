@@ -652,7 +652,7 @@ of the line where you started."
     (when points
       (let ((max-ts (truncate (/ (apply 'max
                                         (mapcar (lambda (p) (elt p 0))
-                                                points))
+                                                (datadog--filter-points points)))
                                  1000))))
         (cond ((< timestamp datadog--active-from-ts) datadog--active-from-ts)
               ((> timestamp max-ts) max-ts)
