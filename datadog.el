@@ -1133,7 +1133,9 @@ a list of queries."
   ;; hook setup
   (add-hook 'window-size-change-functions 'datadog--check-size-change)
 
-  ;; inital display
+  ;; some graph initialization
+  (datadog--set-graph-size)
+  (datadog--set-graph-origin)
   (datadog--splash-screen))
 
 (provide 'datadog)
