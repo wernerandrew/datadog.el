@@ -75,4 +75,3 @@ You can select the graph timeframe by pressing `1` (one hour),
 #### Quitting
 
 Pressing `q` hides the `*datadog*` buffer but does not kill it.
-To kill it, kill as you would nay other buffer.
